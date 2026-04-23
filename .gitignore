@@ -1,0 +1,21 @@
+# Arduino / ESP32 build artifacts
+build/
+bin/
+*.hex
+*.elf
+*.bin
+
+# VS Code / PlatformIO
+.vscode/
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Secrets (Always a good idea to include even if not currently used)
+arduino_secrets.h
+secrets.h
+config.h
