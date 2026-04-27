@@ -22,6 +22,18 @@
 const uint16_t SYNC_TYPE_I = 0x0E6D;  // 0000 1110 0110 1101
 const uint16_t SYNC_TYPE_II = 0xF192; // 1111 0001 1001 0010
 
+// --- チャイム検知用設定 ---
+const float CHIME_CHORD1[] = {1046.5, 1318.5, 1568.0}; // 和音1: C6, E6, G6
+const float CHIME_CHORD2[] = {1108.7, 1396.9, 1760.0}; // 和音2: C#6, F6, A6
+#define CHIME_THRESHOLD 150000.0                       // チャイム判定しきい値
+#define CHIME_MIN_COUNT 15 // 約0.23秒相当 (15.6ms * 15)
+#define CHIME_MAX_GAP 10   // 和音間の最大許容隙間 (約0.15秒)
+
+enum ChimeState { CHIME_IDLE, CHIME_DETECTING_C1, CHIME_DETECTING_C2 };
+ChimeState currentChimeState = CHIME_IDLE;
+int chimeCount = 0;
+int gapCount = 0;
+
 // 地域符号 (12bit reversed)
 const uint16_t AREA_ALL =
     0xB2C; // 地域共通 (0011 0100 1101 -> rev: 1011 0010 1100)
@@ -172,6 +184,55 @@ void loop() {
   // 周波数強度の計算
   float p1024 = goertzel(samples, 1024.0, N);
   float p640 = goertzel(samples, 640.0, N);
+
+  // チャイム周波数の計算
+  bool c1_active = true, c2_active = true;
+  for (int i = 0; i < 3; i++) {
+    float p1 = goertzel(samples, CHIME_CHORD1[i], N);
+    if (p1 < CHIME_THRESHOLD)
+      c1_active = false;
+    float p2 = goertzel(samples, CHIME_CHORD2[i], N);
+    if (p2 < CHIME_THRESHOLD)
+      c2_active = false;
+  }
+
+  // チャイム検知ロジック (State Machine)
+  switch (currentChimeState) {
+  case CHIME_IDLE:
+    if (c1_active) {
+      chimeCount++;
+      if (chimeCount >= CHIME_MIN_COUNT) {
+        currentChimeState = CHIME_DETECTING_C1;
+        chimeCount = 0;
+        gapCount = 0;
+        Serial.println("\n[CHIME: Chord 1 Detected]");
+      }
+    } else {
+      chimeCount = 0;
+    }
+    break;
+
+  case CHIME_DETECTING_C1:
+    if (c2_active) {
+      chimeCount++;
+      if (chimeCount >= CHIME_MIN_COUNT) {
+        Serial.println("\n************************************");
+        Serial.println("【 緊急地震速報（チャイム検知）！！ 】");
+        Serial.println("************************************");
+        currentChimeState = CHIME_IDLE;
+        chimeCount = 0;
+      }
+    } else if (c1_active) {
+      // 継続中
+    } else {
+      gapCount++;
+      if (gapCount > CHIME_MAX_GAP) {
+        currentChimeState = CHIME_IDLE;
+        chimeCount = 0;
+      }
+    }
+    break;
+  }
 
   // ビット判定 (1 or 0)
   bool bit = (p1024 > p640);
