@@ -11,7 +11,7 @@
 #include <RDA5807.h>
 #include <Wire.h>
 
-// --- 設定 ---
+// 設定
 #define FM_STATION 8520 // 受信周波数
 #define AUDIO_IN_PIN 4
 #define SAMPLING_RATE 8000
@@ -20,7 +20,7 @@
 #define I2C_SDA 19              // 新しいSDAピン (D19)
 #define I2C_SCL 18              // 新しいSCLピン (D18)
 
-// --- GPS (NEO-M8N) 設定 ---
+// GPS (NEO-M8N) 設定
 #define GPS_RX_PIN 22 // NEO-M8NのTXを接続
 #define GPS_TX_PIN 23 // NEO-M8NのRXを接続
 HardwareSerial gpsSerial(1);
@@ -52,7 +52,11 @@ unsigned long nextBitStartTime = 0;
 int currentVolume = 5; // 現在の音量を保持する変数
 RDA5807 rx;
 
-// --- UBX Parser State ---
+// FreeRTOS (デュアルコア・排他制御) 関連
+SemaphoreHandle_t i2cMutex;
+TaskHandle_t taskCore0Handle;
+
+// UBX Parser State
 enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
 UBXState ubxState = SYNC1;
 uint8_t msgClass, msgId;
@@ -160,23 +164,24 @@ uint32_t reverseBits(uint32_t val, int width) {
 void setup() {
   Serial.begin(115200);
 
+  // I2Cバス排他制御用のMutexを作成
+  i2cMutex = xSemaphoreCreateMutex();
+
   // GPS用シリアルの初期化
   gpsSerial.begin(38400, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 
-  // UBX-CFG-MSG: RXM-SFRBX (Class 0x02, ID 0x13) の出力を有効化するコマンド
+  // UBX-CFG-MSG: RXM-SFRBX の出力を有効化
   const uint8_t enableSFRBX[] = {
     0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0x02, 0x13, 0x01, 0x20, 0x6C
   };
   gpsSerial.write(enableSFRBX, sizeof(enableSFRBX));
   Serial.println("Sent UBX command to enable RXM-SFRBX.");
 
-  // 電源が安定するまで十分に待機
-  delay(2000);
+  delay(2000); // 電源安定待機
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Serial.println("\n--- RDA5807 FM Radio Initializing ---");
 
-  // ラジオモジュールが認識されるまでリトライ
   bool detected = false;
   for (int i = 0; i < 5; i++) {
     Wire.beginTransmission(0x10);
@@ -190,22 +195,135 @@ void setup() {
   }
 
   if (!detected) {
-    Serial.println(
-        "Error: RDA5807 not found. Please check wiring or press RESET.");
+    Serial.println("Error: RDA5807 not found. Please check wiring or press RESET.");
   }
 
-  // 初期化コマンドを送る
-  rx.setup();
-  rx.setBand(1);
-  rx.setFrequency(FM_STATION);
-  rx.setVolume(1);
-  rx.setMute(false);
-  rx.setMono(true);
+  // Mutexを取得してラジオを初期化
+  if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+    rx.setup();
+    rx.setBand(1);
+    rx.setFrequency(FM_STATION);
+    rx.setVolume(1);
+    rx.setMute(false);
+    rx.setMono(true);
+    xSemaphoreGive(i2cMutex);
+  }
 
   analogReadResolution(12);
   Serial.printf("Tuned to: %d.%d MHz\n", FM_STATION / 100, FM_STATION % 100);
-  Serial.println("EWS Decoder Ready.");
+  Serial.println("EWS Decoder Ready (Core 1).");
+
+  // Core 0 でバックグラウンドタスクを起動
+  xTaskCreatePinnedToCore(
+    taskCore0,         /* 実行する関数 */
+    "TaskCore0",       /* タスク名 */
+    8192,              /* スタックサイズ */
+    NULL,              /* パラメータ */
+    1,                 /* 優先度 */
+    &taskCore0Handle,  /* タスクハンドル */
+    0                  /* ピン留めするコア (0: Pro Core) */
+  );
+  Serial.println("GPS/Command Processor Ready (Core 0).");
 }
+
+// Core 0: GPS/UBX受信 と ユーザーコマンド処理 (バックグラウンド)
+void processCommand(char* cmd) {
+  if (cmd[0] == 'v' || cmd[0] == 'V') {
+    int vol = atoi(&cmd[1]);
+    if (vol >= 0 && vol <= 15) {
+      currentVolume = vol;
+      if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        rx.setVolume(currentVolume);
+        xSemaphoreGive(i2cMutex);
+      }
+      Serial.printf("Volume set to: %d\n", currentVolume);
+    }
+  } else if (strcmp(cmd, "status") == 0) {
+    int freq = 0, rssi = 0;
+    if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+      freq = rx.getFrequency();
+      rssi = rx.getRssi();
+      xSemaphoreGive(i2cMutex);
+    }
+    Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n", freq / 100, freq % 100, currentVolume, rssi);
+  } else {
+    float f = atof(cmd);
+    if (f >= 76.0 && f <= 108.0) {
+      int freqInt = (int)(f * 100);
+      if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        rx.setFrequency(freqInt);
+        xSemaphoreGive(i2cMutex);
+      }
+      Serial.printf("Frequency set to: %d.%d MHz\n", freqInt / 100, freqInt % 100);
+    }
+  }
+}
+
+void taskCore0(void *pvParameters) {
+  char cmdBuffer[32];
+  int cmdIndex = 0;
+
+  for (;;) {
+    // 1. シリアルコマンド処理 (char配列で処理)
+    while (Serial.available() > 0) {
+      char c = Serial.read();
+      if (c == '\n' || c == '\r') {
+        if (cmdIndex > 0) {
+          cmdBuffer[cmdIndex] = '\0';
+          processCommand(cmdBuffer);
+          cmdIndex = 0;
+        }
+      } else if (cmdIndex < 31) {
+        cmdBuffer[cmdIndex++] = c;
+      }
+    }
+
+    // 2. GPS / UBX 解析処理
+    while (gpsSerial.available()) {
+      uint8_t c = gpsSerial.read();
+
+      // UBXステートマシン
+      switch (ubxState) {
+        case SYNC1: if (c == 0xB5) ubxState = SYNC2; break;
+        case SYNC2: if (c == 0x62) ubxState = CLASS; else ubxState = SYNC1; break;
+        case CLASS: msgClass = c; expectedCkA = c; expectedCkB = c; ubxState = ID; break;
+        case ID: msgId = c; expectedCkA += c; expectedCkB += expectedCkA; ubxState = LEN1; break;
+        case LEN1: msgLen = c; expectedCkA += c; expectedCkB += expectedCkA; ubxState = LEN2; break;
+        case LEN2:
+          msgLen |= (c << 8); expectedCkA += c; expectedCkB += expectedCkA;
+          if (msgLen > 256) ubxState = SYNC1;
+          else { payloadIndex = 0; ubxState = msgLen > 0 ? PAYLOAD : CK_A; }
+          break;
+        case PAYLOAD:
+          ubxPayload[payloadIndex++] = c; expectedCkA += c; expectedCkB += expectedCkA;
+          if (payloadIndex == msgLen) ubxState = CK_A;
+          break;
+        case CK_A: if (c == expectedCkA) ubxState = CK_B; else ubxState = SYNC1; break;
+        case CK_B:
+          if (c == expectedCkB) {
+            if (msgClass == 0x02 && msgId == 0x13) {
+              uint8_t gnssId = ubxPayload[0];
+              uint8_t svId = ubxPayload[1];
+              Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS: %d, SV: %d\n", gnssId, svId);
+              if (gnssId == 5) Serial.println(">>> 🛰 QZSS (みちびき) サブフレームデータ捕捉! <<<");
+            }
+          }
+          ubxState = SYNC1;
+          break;
+      }
+      
+      // NMEAパススルー表示
+      if (ubxState == SYNC1 && (c == '$' || c == '\n' || c == '\r' || (c >= 32 && c <= 126))) {
+        Serial.write(c);
+      }
+    }
+
+    // WDTリセットとCPU負荷軽減のためのスリープ (10ms)
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+// Core 1: EWS (FSK) 音声解析 (メインループ)
 
 void loop() {
   if (nextBitStartTime == 0)
@@ -246,8 +364,13 @@ void loop() {
       isEndSignal = (prePart == 0x03);
       currentSyncType = syncPart;
 
-      // ラジオの状態を取得
-      int rssi = rx.getRssi();
+      // ラジオの状態を取得 (Mutex保護)
+      int rssi = 0;
+      if (xSemaphoreTake(i2cMutex, (TickType_t)10)) {
+        rssi = rx.getRssi();
+        xSemaphoreGive(i2cMutex);
+      }
+      
       Serial.printf("\n[SYNC FOUND: %s %s | RSSI: %d]\n",
                     isEndSignal ? "END" : "START",
                     (syncPart == SYNC_TYPE_II) ? "Type II" : "Type I", rssi);
@@ -319,93 +442,6 @@ void loop() {
       }
     }
     break;
-  }
-
-  // シリアルコマンド処理 (ラジオ操作)
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-
-    if (cmd.startsWith("v")) { // 音量変更 (例: v10)
-      currentVolume = cmd.substring(1).toInt();
-      rx.setVolume(currentVolume);
-      Serial.printf("Volume set to: %d\n", currentVolume);
-    } else if (cmd.length() >= 3 &&
-               cmd.indexOf('.') > 0) { // 周波数変更 (例: 80.0)
-      float freq = cmd.toFloat();
-      if (freq >= 76.0 && freq <= 108.0) {
-        int f = (int)(freq * 100);
-        rx.setFrequency(f);
-        Serial.printf("Frequency set to: %d.%d MHz\n", f / 100, f % 100);
-      }
-    } else if (cmd == "status") { // 現在の状態表示
-      Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n",
-                    rx.getFrequency() / 100, rx.getFrequency() % 100,
-                    currentVolume, rx.getRssi());
-    }
-  }
-
-  // --- ステップ2: GPSデータ (NMEA & UBX) の並行処理 ---
-  while (gpsSerial.available()) {
-    uint8_t c = gpsSerial.read();
-
-    // UBXステートマシン (バイナリデータ解析)
-    switch (ubxState) {
-      case SYNC1:
-        if (c == 0xB5) ubxState = SYNC2;
-        break;
-      case SYNC2:
-        if (c == 0x62) ubxState = CLASS;
-        else ubxState = SYNC1;
-        break;
-      case CLASS:
-        msgClass = c; expectedCkA = c; expectedCkB = c;
-        ubxState = ID;
-        break;
-      case ID:
-        msgId = c; expectedCkA += c; expectedCkB += expectedCkA;
-        ubxState = LEN1;
-        break;
-      case LEN1:
-        msgLen = c; expectedCkA += c; expectedCkB += expectedCkA;
-        ubxState = LEN2;
-        break;
-      case LEN2:
-        msgLen |= (c << 8); expectedCkA += c; expectedCkB += expectedCkA;
-        if (msgLen > 256) ubxState = SYNC1;
-        else { payloadIndex = 0; ubxState = msgLen > 0 ? PAYLOAD : CK_A; }
-        break;
-      case PAYLOAD:
-        ubxPayload[payloadIndex++] = c;
-        expectedCkA += c; expectedCkB += expectedCkA;
-        if (payloadIndex == msgLen) ubxState = CK_A;
-        break;
-      case CK_A:
-        if (c == expectedCkA) ubxState = CK_B;
-        else ubxState = SYNC1;
-        break;
-      case CK_B:
-        if (c == expectedCkB) {
-          // 正常なUBXパケットを受信！
-          if (msgClass == 0x02 && msgId == 0x13) { // RXM-SFRBX
-            uint8_t gnssId = ubxPayload[0];
-            uint8_t svId = ubxPayload[1];
-            Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS ID: %d, SV ID: %d\n", gnssId, svId);
-            
-            // GNSS ID: 5 は QZSS（みちびき）
-            if (gnssId == 5) {
-              Serial.println(">>> 🛰 QZSS (みちびき) のサブフレームデータを捕捉! <<<");
-            }
-          }
-        }
-        ubxState = SYNC1;
-        break;
-    }
-
-    // 文字化けしないASCII文字(NMEA)だけをシリアルモニタにも表示
-    if (ubxState == SYNC1 && (c == '$' || c == '\n' || c == '\r' || (c >= 32 && c <= 126))) {
-      Serial.write(c);
-    }
   }
 
   // デバッグ：信号強度がある程度ある時だけビットをドットで表示
