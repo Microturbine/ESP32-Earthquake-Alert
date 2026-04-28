@@ -12,11 +12,11 @@
 #include <Wire.h>
 
 // --- 設定 ---
-#define FM_STATION 8520 // 受信周波数 (NHK-FMなど)
+#define FM_STATION 8520 // 受信周波数
 #define AUDIO_IN_PIN 4
 #define SAMPLING_RATE 8000
 #define N 125                   // 8000Hz / 125 = 64Hz (1ビットの時間に相当)
-#define SIGNAL_THRESHOLD 130000 // 判定しきい値（ノイズが多い場合は大きくする）
+#define SIGNAL_THRESHOLD 130000 // 判定しきい値（ノイズが多い場合は大きく）
 #define I2C_SDA 19              // 新しいSDAピン (D19)
 #define I2C_SCL 18              // 新しいSCLピン (D18)
 
@@ -44,6 +44,7 @@ int bitIndex = 0;
 uint32_t bitBuffer = 0;
 int displayBitCount = 0;
 unsigned long nextBitStartTime = 0;
+int currentVolume = 5; // 現在の音量を保持する変数
 RDA5807 rx;
 
 // 地域符号と名称の対応
@@ -146,7 +147,7 @@ uint32_t reverseBits(uint32_t val, int width) {
 void setup() {
   Serial.begin(115200);
 
-  // 電源が安定するまで十分に待機 (重要!)
+  // 電源が安定するまで十分に待機
   delay(2000);
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -170,11 +171,11 @@ void setup() {
         "Error: RDA5807 not found. Please check wiring or press RESET.");
   }
 
-  // 確実に初期化コマンドを送る
+  // 初期化コマンドを送る
   rx.setup();
   rx.setBand(1);
   rx.setFrequency(FM_STATION);
-  rx.setVolume(5);
+  rx.setVolume(1);
   rx.setMute(false);
   rx.setMono(true);
 
@@ -297,8 +298,32 @@ void loop() {
     break;
   }
 
-  // デバッグ用：信号強度がある程度ある時だけビットをドットで表示
+  // シリアルコマンド処理 (ラジオ操作)
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd.startsWith("v")) { // 音量変更 (例: v10)
+      currentVolume = cmd.substring(1).toInt();
+      rx.setVolume(currentVolume);
+      Serial.printf("Volume set to: %d\n", currentVolume);
+    } else if (cmd.length() >= 3 &&
+               cmd.indexOf('.') > 0) { // 周波数変更 (例: 80.0)
+      float freq = cmd.toFloat();
+      if (freq >= 76.0 && freq <= 108.0) {
+        int f = (int)(freq * 100);
+        rx.setFrequency(f);
+        Serial.printf("Frequency set to: %d.%d MHz\n", f / 100, f % 100);
+      }
+    } else if (cmd == "status") { // 現在の状態表示
+      Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n",
+                    rx.getFrequency() / 100, rx.getFrequency() % 100,
+                    currentVolume, rx.getRssi());
+    }
+  }
+
+  // デバッグ：信号強度がある程度ある時だけビットをドットで表示
   if (p1024 > SIGNAL_THRESHOLD || p640 > SIGNAL_THRESHOLD) {
-    // 0の連続を防ぐため、通常時は何も出さず、同期発見時のみに集中
+    // 0連続を防ぐため、通常時は出さず同期発見時のみ表示
   }
 }
