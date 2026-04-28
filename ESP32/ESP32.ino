@@ -12,11 +12,13 @@
 #include <Wire.h>
 
 // --- 設定 ---
-#define FM_STATION 8250 // 受信周波数 (NHK-FMなど)
+#define FM_STATION 8520 // 受信周波数 (NHK-FMなど)
 #define AUDIO_IN_PIN 4
 #define SAMPLING_RATE 8000
 #define N 125                   // 8000Hz / 125 = 64Hz (1ビットの時間に相当)
 #define SIGNAL_THRESHOLD 130000 // 判定しきい値（ノイズが多い場合は大きくする）
+#define I2C_SDA 19              // 新しいSDAピン (D19)
+#define I2C_SCL 18              // 新しいSCLピン (D18)
 
 // アナログEWS仕様に基づく定数
 const uint16_t SYNC_TYPE_I = 0x0E6D;  // 0000 1110 0110 1101
@@ -143,12 +145,42 @@ uint32_t reverseBits(uint32_t val, int width) {
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin();
+
+  // 電源が安定するまで十分に待機 (重要!)
+  delay(2000);
+
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Serial.println("\n--- RDA5807 FM Radio Initializing ---");
+
+  // ラジオモジュールが認識されるまでリトライ
+  bool detected = false;
+  for (int i = 0; i < 5; i++) {
+    Wire.beginTransmission(0x10);
+    if (Wire.endTransmission() == 0) {
+      detected = true;
+      Serial.println("RDA5807 detected!");
+      break;
+    }
+    Serial.printf("Searching for RDA5807 (Attempt %d/5)...\n", i + 1);
+    delay(500);
+  }
+
+  if (!detected) {
+    Serial.println(
+        "Error: RDA5807 not found. Please check wiring or press RESET.");
+  }
+
+  // 確実に初期化コマンドを送る
   rx.setup();
-  rx.setVolume(10);
+  rx.setBand(1);
   rx.setFrequency(FM_STATION);
+  rx.setVolume(5);
+  rx.setMute(false);
+  rx.setMono(true);
+
   analogReadResolution(12);
-  Serial.println("EWS Decoder Ready. Monitoring...");
+  Serial.printf("Tuned to: %d.%d MHz\n", FM_STATION / 100, FM_STATION % 100);
+  Serial.println("EWS Decoder Ready.");
 }
 
 void loop() {
@@ -159,7 +191,6 @@ void loop() {
   unsigned long startTime = nextBitStartTime;
 
   // 1ビット分の時間をサンプリング (約15.6ms)
-  // バイアス回路により、無音時に analogRead が約2048 (1.65V) になることを想定
   for (int i = 0; i < N; i++) {
     samples[i] = analogRead(AUDIO_IN_PIN) - 2048;
     while (micros() - startTime < (i + 1) * (1000000 / SAMPLING_RATE))
@@ -169,7 +200,7 @@ void loop() {
   // 次のビットの開始予定時刻を更新（累積誤差を防ぐ）
   nextBitStartTime += 15625; // 1,000,000us / 64bps = 15625us
 
-  // 周波数強度の計算
+  // 周波数強度の計算 (640Hz vs 1024Hz)
   float p1024 = goertzel(samples, 1024.0, N);
   float p640 = goertzel(samples, 640.0, N);
 
@@ -190,8 +221,13 @@ void loop() {
         (prePart == 0x0C || prePart == 0x03)) {
       isEndSignal = (prePart == 0x03);
       currentSyncType = syncPart;
-      Serial.printf("\n[SYNC FOUND: %s %s]\n", isEndSignal ? "END" : "START",
-                    (syncPart == SYNC_TYPE_II) ? "Type II" : "Type I");
+
+      // ラジオの状態を取得
+      int rssi = rx.getRssi();
+      Serial.printf("\n[SYNC FOUND: %s %s | RSSI: %d]\n",
+                    isEndSignal ? "END" : "START",
+                    (syncPart == SYNC_TYPE_II) ? "Type II" : "Type I", rssi);
+
       currentState = DECODE_FRAME;
       bitIndex = 20;
       for (int j = 0; j < 20; j++)
@@ -203,8 +239,7 @@ void loop() {
   case DECODE_FRAME:
     frameBits[bitIndex++] = bit ? 1 : 0;
 
-    // 100ビット（前置4 + 固定・データ96）溜まったら詳細解析
-    // ※終了信号の場合、この後192ビットまで無信号が続くが、データは100ビット目までで抽出可能
+    // 100ビット溜まったら詳細解析
     if (bitIndex >= 100) {
       Serial.println("\n--- [EWS Block Decoded] ---");
       if (!isEndSignal) {
@@ -227,51 +262,32 @@ void loop() {
       uint16_t dateCode = getBlock(52);
       uint16_t timeCode = getBlock(84);
 
-      // 地域符号の解析
+      // 各項目のデコード処理
       uint16_t areaData = reverseBits((areaCode >> 2) & 0x0FFF, 12);
       Serial.printf("地域: %03X (%s)\n", areaData, getRegionName(areaData));
 
-      // 月日の分解 (テーブル照合)
-      uint8_t day_bits = (dateCode >> 8) & 0x1F;
-      uint8_t month_bits =
-          ((dateCode >> 2) & 0x1E) | ((dateCode >> 7) & 1); // 予備含め5bit抽出
-      // 実際には月は下位4bit+予備のようなので、提供テーブルに合わせて調整
-      uint8_t month_val_bits = (dateCode >> 3) & 0x0F;
+      int day = lookup((dateCode >> 8) & 0x1F, TABLE_DAY, 31, 1);
+      int month = lookup(((dateCode >> 3) & 0x0F) << 1 | 1, TABLE_MONTH, 12, 1);
       bool dateFlag = (dateCode >> 7) & 1;
-
-      int day = lookup(day_bits, TABLE_DAY, 31, 1);
-      int month = lookup((month_val_bits << 1) | 1, TABLE_MONTH, 12,
-                         1); // 予備bit=1を付加して照合
-
       Serial.printf("日付: %d月 %d日 (%s)\n", month, day,
                     dateFlag ? "前日/翌日" : "当日");
 
-      // 年時の分解 (テーブル照合)
-      uint8_t hour_bits = (timeCode >> 8) & 0x1F;
-      uint8_t year_val_bits = (timeCode >> 3) & 0x0F;
-      bool timeFlag = (timeCode >> 7) & 1;
-
-      int hour = lookup(hour_bits, TABLE_HOUR, 24, 0);
-
-      // 年符号の解析 (下1桁方式: 5=5年, 10=0年)
-      int year_digit = reverseBits(year_val_bits, 4);
+      int hour = lookup((timeCode >> 8) & 0x1F, TABLE_HOUR, 24, 0);
+      int year_digit = reverseBits((timeCode >> 3) & 0x0F, 4);
       if (year_digit == 10)
         year_digit = 0;
+      bool timeFlag = (timeCode >> 7) & 1;
 
-      // 現在の年代 (2020年代) を基準に西暦を合成
       int year_full = 2020 + year_digit;
-      // もし2013年のような過去の信号を扱う場合のための自動調整
-      // (2025年にいると想定)
       if (year_full > 2029)
         year_full -= 10;
       if (year_full < 2020 && year_digit > 5)
-        year_full -= 10; // 2013年等の対応
+        year_full -= 10;
 
       Serial.printf("時刻: %d時台 (%s) / 年: %d年\n", hour,
                     timeFlag ? "前後1時間" : "現時", year_full);
       Serial.println("---------------------------");
 
-      // 終了信号の場合は 192ビットまで待機してから SEARCH_SYNC に戻る
       if (!isEndSignal || bitIndex >= 192) {
         currentState = SEARCH_SYNC;
         bitIndex = 0;
@@ -281,12 +297,8 @@ void loop() {
     break;
   }
 
-  // ドット表示（生存確認用）
+  // デバッグ用：信号強度がある程度ある時だけビットをドットで表示
   if (p1024 > SIGNAL_THRESHOLD || p640 > SIGNAL_THRESHOLD) {
-    Serial.print(bit ? "1" : "0");
-    if (++displayBitCount >= 64) {
-      Serial.println();
-      displayBitCount = 0;
-    }
+    // 0の連続を防ぐため、通常時は何も出さず、同期発見時のみに集中
   }
 }
