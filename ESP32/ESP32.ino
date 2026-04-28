@@ -20,6 +20,11 @@
 #define I2C_SDA 19              // 新しいSDAピン (D19)
 #define I2C_SCL 18              // 新しいSCLピン (D18)
 
+// --- GPS (NEO-M8N) 設定 ---
+#define GPS_RX_PIN 22 // NEO-M8NのTXを接続
+#define GPS_TX_PIN 23 // NEO-M8NのRXを接続
+HardwareSerial gpsSerial(1);
+
 // アナログEWS仕様に基づく定数
 const uint16_t SYNC_TYPE_I = 0x0E6D;  // 0000 1110 0110 1101
 const uint16_t SYNC_TYPE_II = 0xF192; // 1111 0001 1001 0010
@@ -46,6 +51,14 @@ int displayBitCount = 0;
 unsigned long nextBitStartTime = 0;
 int currentVolume = 5; // 現在の音量を保持する変数
 RDA5807 rx;
+
+// --- UBX Parser State ---
+enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
+UBXState ubxState = SYNC1;
+uint8_t msgClass, msgId;
+uint16_t msgLen, payloadIndex;
+uint8_t ubxPayload[256];
+uint8_t expectedCkA, expectedCkB;
 
 // 地域符号と名称の対応
 struct RegionMap {
@@ -146,6 +159,16 @@ uint32_t reverseBits(uint32_t val, int width) {
 
 void setup() {
   Serial.begin(115200);
+
+  // GPS用シリアルの初期化
+  gpsSerial.begin(38400, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+
+  // UBX-CFG-MSG: RXM-SFRBX (Class 0x02, ID 0x13) の出力を有効化するコマンド
+  const uint8_t enableSFRBX[] = {
+    0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0x02, 0x13, 0x01, 0x20, 0x6C
+  };
+  gpsSerial.write(enableSFRBX, sizeof(enableSFRBX));
+  Serial.println("Sent UBX command to enable RXM-SFRBX.");
 
   // 電源が安定するまで十分に待機
   delay(2000);
@@ -319,6 +342,69 @@ void loop() {
       Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n",
                     rx.getFrequency() / 100, rx.getFrequency() % 100,
                     currentVolume, rx.getRssi());
+    }
+  }
+
+  // --- ステップ2: GPSデータ (NMEA & UBX) の並行処理 ---
+  while (gpsSerial.available()) {
+    uint8_t c = gpsSerial.read();
+
+    // UBXステートマシン (バイナリデータ解析)
+    switch (ubxState) {
+      case SYNC1:
+        if (c == 0xB5) ubxState = SYNC2;
+        break;
+      case SYNC2:
+        if (c == 0x62) ubxState = CLASS;
+        else ubxState = SYNC1;
+        break;
+      case CLASS:
+        msgClass = c; expectedCkA = c; expectedCkB = c;
+        ubxState = ID;
+        break;
+      case ID:
+        msgId = c; expectedCkA += c; expectedCkB += expectedCkA;
+        ubxState = LEN1;
+        break;
+      case LEN1:
+        msgLen = c; expectedCkA += c; expectedCkB += expectedCkA;
+        ubxState = LEN2;
+        break;
+      case LEN2:
+        msgLen |= (c << 8); expectedCkA += c; expectedCkB += expectedCkA;
+        if (msgLen > 256) ubxState = SYNC1;
+        else { payloadIndex = 0; ubxState = msgLen > 0 ? PAYLOAD : CK_A; }
+        break;
+      case PAYLOAD:
+        ubxPayload[payloadIndex++] = c;
+        expectedCkA += c; expectedCkB += expectedCkA;
+        if (payloadIndex == msgLen) ubxState = CK_A;
+        break;
+      case CK_A:
+        if (c == expectedCkA) ubxState = CK_B;
+        else ubxState = SYNC1;
+        break;
+      case CK_B:
+        if (c == expectedCkB) {
+          // 正常なUBXパケットを受信！
+          if (msgClass == 0x02 && msgId == 0x13) { // RXM-SFRBX
+            uint8_t gnssId = ubxPayload[0];
+            uint8_t svId = ubxPayload[1];
+            Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS ID: %d, SV ID: %d\n", gnssId, svId);
+            
+            // GNSS ID: 5 は QZSS（みちびき）
+            if (gnssId == 5) {
+              Serial.println(">>> 🛰 QZSS (みちびき) のサブフレームデータを捕捉! <<<");
+            }
+          }
+        }
+        ubxState = SYNC1;
+        break;
+    }
+
+    // 文字化けしないASCII文字(NMEA)だけをシリアルモニタにも表示
+    if (ubxState == SYNC1 && (c == '$' || c == '\n' || c == '\r' || (c >= 32 && c <= 126))) {
+      Serial.write(c);
     }
   }
 
