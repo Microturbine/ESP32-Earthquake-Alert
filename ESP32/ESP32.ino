@@ -25,7 +25,7 @@ public:
       auto cfg = _bus_instance.config();
       cfg.spi_host = VSPI_HOST;
       cfg.spi_mode = 3;
-      cfg.freq_write = 20000000; // 20MHz (安定性重視)
+      cfg.freq_write = 20000000; // 20MHz
       cfg.pin_sclk = 14; 
       cfg.pin_mosi = 13;
       cfg.pin_miso = -1;
@@ -62,11 +62,11 @@ LGFX_Sprite canvas(&tft); // フリッカー防止用の仮想画面
 // 設定
 #define FM_STATION 8520 // 受信周波数
 #define AUDIO_IN_PIN 4
-#define SAMPLING_RATE 8000
-#define N 125                   // 8000Hz / 125 = 64Hz (1ビットの時間に相当)
+#define SAMPLING_RATE 8000      // 8000Hz / 125 = 64Hz (1ビットの時間に相当)
+#define N 125                   
 #define SIGNAL_THRESHOLD 130000 // 判定しきい値（ノイズが多い場合は大きく）
-#define I2C_SDA 19              // 新しいSDAピン (D19)
-#define I2C_SCL 18              // 新しいSCLピン (D18)
+#define I2C_SDA 19              // SDAピン
+#define I2C_SCL 18              // SCLピン
 
 // GPS (NEO-M8N) 設定
 #define GPS_RX_PIN 22
@@ -201,7 +201,7 @@ float goertzel(int *samples, float targetFreq, int numSamples) {
   return (q1 * q1) + (q2 * q2) - (q1 * q2 * coeff);
 }
 
-// 指定したビット幅でビット順序を反転させるヘルパー関数
+// 指定したビット幅でビット順序を反転
 uint32_t reverseBits(uint32_t val, int width) {
   uint32_t res = 0;
   for (int i = 0; i < width; i++) {
@@ -378,11 +378,14 @@ void taskCore0(void *pvParameters) {
         canvas.fillScreen(TFT_BLACK);
 
         // 1行目: [タイトル] と [周波数]
-        canvas.setTextSize(2);
+        canvas.setFont(&fonts::lgfxJapanGothic_16); // 日本語ゴシック 16px
+        canvas.setTextSize(1);
         canvas.setTextColor(TFT_WHITE);
         canvas.setCursor(5, 2);
-        canvas.print("EWS/QZSS"); 
+        canvas.print("QZSS受信機"); 
         
+        canvas.setFont(&fonts::Font0); // 数字のために標準フォントに戻す
+        canvas.setTextSize(2);
         canvas.setTextColor(TFT_ORANGE);
         canvas.setCursor(155, 2);
         canvas.printf("%d.%dMHz", freq / 100, (freq % 100) / 10);
@@ -408,10 +411,12 @@ void taskCore0(void *pvParameters) {
         
         // 4行目 (最下段): システムステータス
         canvas.fillRect(0, 58, 284, 18, (currentState == DECODE_FRAME) ? TFT_RED : 0x2104);
-        canvas.setCursor(10, 62);
+        canvas.setCursor(5, 61); // 枠の中央になるようY座標を少し調整
         canvas.setTextColor(TFT_WHITE);
+        canvas.setFont(&fonts::lgfxJapanGothic_12); // 日本語ゴシック 12px
         canvas.setTextSize(1);
-        canvas.print(currentState == DECODE_FRAME ? "!!! EMERGENCY SIGNAL DETECTED !!!" : "SYSTEM MONITORING - READY");
+        canvas.print(currentState == DECODE_FRAME ? "警報信号を受信・解析中..." : "システム監視中 - 待機状態");
+        canvas.setFont(&fonts::Font0); // 標準フォントに戻す
 
         canvas.pushSprite(0, 0);
       }
