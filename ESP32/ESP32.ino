@@ -10,8 +10,56 @@
 
 #include <RDA5807.h>
 #include <Wire.h>
+#define LGFX_USE_V1
+#include <LovyanGFX.hpp>
 
-// --- 設定 ---
+// --- LovyanGFX (ST7789) 設定 ---
+class LGFX : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel_instance;
+  lgfx::Bus_SPI       _bus_instance;
+  lgfx::Light_PWM     _light_instance;
+
+public:
+  LGFX(void) {
+    {
+      auto cfg = _bus_instance.config();
+      cfg.spi_host = VSPI_HOST;
+      cfg.spi_mode = 3;
+      cfg.freq_write = 20000000; // 20MHz (安定性重視)
+      cfg.pin_sclk = 14; 
+      cfg.pin_mosi = 13;
+      cfg.pin_miso = -1;
+      cfg.pin_dc   = 15;
+      _bus_instance.config(cfg);
+      _panel_instance.setBus(&_bus_instance);
+    }
+    {
+      auto cfg = _panel_instance.config();
+      cfg.pin_cs           = 5;
+      cfg.pin_rst          = 27;
+      cfg.panel_width      = 76;
+      cfg.panel_height     = 284;
+      cfg.offset_x         = 82;
+      cfg.offset_y         = 18;
+      cfg.offset_rotation  = 0;
+      _panel_instance.config(cfg);
+    }
+    {
+      auto cfg = _light_instance.config();
+      cfg.pin_bl = 21;
+      cfg.invert = false;
+      cfg.freq   = 44100;
+      cfg.pwm_channel = 7;
+      _light_instance.config(cfg);
+      _panel_instance.setLight(&_light_instance);
+    }
+    setPanel(&_panel_instance);
+  }
+};
+LGFX tft;
+LGFX_Sprite canvas(&tft); // フリッカー防止用の仮想画面
+
+// 設定
 #define FM_STATION 8520 // 受信周波数
 #define AUDIO_IN_PIN 4
 #define SAMPLING_RATE 8000
@@ -19,6 +67,14 @@
 #define SIGNAL_THRESHOLD 130000 // 判定しきい値（ノイズが多い場合は大きく）
 #define I2C_SDA 19              // 新しいSDAピン (D19)
 #define I2C_SCL 18              // 新しいSCLピン (D18)
+
+// GPS (NEO-M8N) 設定
+#define GPS_RX_PIN 22
+#define GPS_TX_PIN 23
+HardwareSerial gpsSerial(1);
+
+// 本体LED (アラート用)
+#define ALERT_LED 2
 
 // アナログEWS仕様に基づく定数
 const uint16_t SYNC_TYPE_I = 0x0E6D;  // 0000 1110 0110 1101
@@ -44,8 +100,20 @@ int bitIndex = 0;
 uint32_t bitBuffer = 0;
 int displayBitCount = 0;
 unsigned long nextBitStartTime = 0;
-int currentVolume = 5; // 現在の音量を保持する変数
+int currentVolume = 1; // 音量初期値
 RDA5807 rx;
+
+// FreeRTOS関連
+SemaphoreHandle_t i2cMutex;
+TaskHandle_t taskCore0Handle;
+
+// UBX Parser State
+enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
+UBXState ubxState = SYNC1;
+uint8_t msgClass, msgId;
+uint16_t msgLen, payloadIndex;
+uint8_t ubxPayload[256];
+uint8_t expectedCkA, expectedCkB;
 
 // 地域符号と名称の対応
 struct RegionMap {
@@ -147,13 +215,24 @@ uint32_t reverseBits(uint32_t val, int width) {
 void setup() {
   Serial.begin(115200);
 
-  // 電源が安定するまで十分に待機
-  delay(2000);
+  // I2Cバス排他制御用のMutexを作成
+  i2cMutex = xSemaphoreCreateMutex();
+
+  // GPS用シリアルの初期化
+  gpsSerial.begin(38400, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+
+  // UBX-CFG-MSG: RXM-SFRBX の出力を有効化
+  const uint8_t enableSFRBX[] = {
+    0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0x02, 0x13, 0x01, 0x20, 0x6C
+  };
+  gpsSerial.write(enableSFRBX, sizeof(enableSFRBX));
+  Serial.println("Sent UBX command to enable RXM-SFRBX.");
+
+  delay(2000); // 電源安定待機
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Serial.println("\n--- RDA5807 FM Radio Initializing ---");
 
-  // ラジオモジュールが認識されるまでリトライ
   bool detected = false;
   for (int i = 0; i < 5; i++) {
     Wire.beginTransmission(0x10);
@@ -167,22 +246,337 @@ void setup() {
   }
 
   if (!detected) {
-    Serial.println(
-        "Error: RDA5807 not found. Please check wiring or press RESET.");
+    Serial.println("Error: RDA5807 not found. Please check wiring or press RESET.");
   }
 
-  // 初期化コマンドを送る
-  rx.setup();
-  rx.setBand(1);
-  rx.setFrequency(FM_STATION);
-  rx.setVolume(1);
-  rx.setMute(false);
-  rx.setMono(true);
+  // Mutexを取得してラジオを初期化
+  if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+    rx.setup();
+    rx.setBand(1);
+    rx.setFrequency(FM_STATION);
+    rx.setVolume(currentVolume);
+    rx.setMute(false);
+    rx.setMono(true);
+    xSemaphoreGive(i2cMutex);
+  }
 
   analogReadResolution(12);
   Serial.printf("Tuned to: %d.%d MHz\n", FM_STATION / 100, FM_STATION % 100);
-  Serial.println("EWS Decoder Ready.");
+  Serial.println("EWS Decoder Ready (Core 1).");
+
+  // 液晶初期化
+  tft.init();
+  tft.setRotation(1); // 横向き(ランドスケープ)に設定
+  tft.fillScreen(TFT_BLACK);
+  tft.println("Initializing...");
+  tft.setBrightness(128);
+
+  // スプライト（仮想画面）の作成
+  canvas.createSprite(284, 76);
+  canvas.setTextColor(TFT_WHITE);
+  canvas.setTextSize(1);
+
+  // LEDの初期化
+  pinMode(ALERT_LED, OUTPUT);
+  digitalWrite(ALERT_LED, LOW);
+
+  // Core 0 でタスク起動
+  xTaskCreatePinnedToCore(
+    taskCore0,         /* 実行する関数 */
+    "TaskCore0",       /* タスク名 */
+    8192,              /* スタックサイズ */
+    NULL,              /* パラメータ */
+    1,                 /* 優先度 */
+    &taskCore0Handle,  /* タスクハンドル */
+    0                  /* ピン留めするコア (0: Pro Core) */
+  );
+  Serial.println("GPS/Command Processor Ready (Core 0).");
 }
+
+// Core 0: GPS/UBX受信 と ユーザーコマンド処理
+void processCommand(char* cmd) {
+  if (cmd[0] == 'v' || cmd[0] == 'V') {
+    int vol = atoi(&cmd[1]);
+    if (vol >= 0 && vol <= 15) {
+      currentVolume = vol;
+      if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        rx.setVolume(currentVolume);
+        xSemaphoreGive(i2cMutex);
+      }
+      Serial.printf("Volume set to: %d\n", currentVolume);
+    }
+  } else if (strcmp(cmd, "status") == 0) {
+    int freq = 0, rssi = 0;
+    if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+      freq = rx.getFrequency();
+      rssi = rx.getRssi();
+      xSemaphoreGive(i2cMutex);
+    }
+    Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n", freq / 100, freq % 100, currentVolume, rssi);
+  } else {
+    float f = atof(cmd);
+    if (f >= 76.0 && f <= 108.0) {
+      int freqInt = (int)(f * 100);
+      if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        rx.setFrequency(freqInt);
+        xSemaphoreGive(i2cMutex);
+      }
+      Serial.printf("Frequency set to: %d.%d MHz\n", freqInt / 100, freqInt % 100);
+    }
+  }
+}
+
+uint32_t getUbxBits(const uint8_t* data, int offset, int length) {
+  uint32_t result = 0;
+  for (int i = 0; i < length; i++) {
+    int bitPos = offset + i;
+    int byteIdx = bitPos / 8;
+    int bitIdx = 7 - (bitPos % 8);
+    uint8_t bit = (data[byteIdx] >> bitIdx) & 1;
+    result = (result << 1) | bit;
+  }
+  return result;
+}
+
+void taskCore0(void *pvParameters) {
+  char cmdBuffer[32];
+  int cmdIndex = 0;
+  uint32_t lastUpdate = 0;
+  
+  // 前回の値を保持する変数 (差分更新用)
+  int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
+  char lastTimeStr[10] = "";
+  EwsState lastState = SEARCH_SYNC;
+
+  int svCount = 0;
+  char timeStr[10] = "--:--:--";
+
+  for (;;) {
+    uint32_t now = millis();
+
+    // 1. 液晶描画処理 (1000ms周期 + 差分更新)
+    if (now - lastUpdate > 1000) {
+      lastUpdate = now;
+      int freq = 0, rssi = 0;
+      
+      if (xSemaphoreTake(i2cMutex, (TickType_t)5)) {
+        freq = rx.getFrequency();
+        rssi = rx.getRssi();
+        xSemaphoreGive(i2cMutex);
+      }
+
+      // 変化があったかチェック (RSSIは変動しやすいため、差が2以上の場合のみ更新)
+      bool changed = (freq != lastFreq) || (abs(rssi - lastRssi) > 2) || 
+                     (svCount != lastSvCount) || (currentVolume != lastVol) ||
+                     (strcmp(timeStr, lastTimeStr) != 0) || (currentState != lastState);
+
+      if (changed) {
+        lastFreq = freq; lastRssi = rssi; lastSvCount = svCount;
+        lastVol = currentVolume; lastState = currentState;
+        strcpy(lastTimeStr, timeStr);
+
+        canvas.fillScreen(TFT_BLACK);
+
+        // 1行目: [タイトル] と [周波数]
+        canvas.setTextSize(2);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.setCursor(5, 2);
+        canvas.print("EWS/QZSS"); 
+        
+        canvas.setTextColor(TFT_ORANGE);
+        canvas.setCursor(155, 2);
+        canvas.printf("%d.%dMHz", freq / 100, (freq % 100) / 10);
+
+        canvas.drawFastHLine(0, 20, 284, TFT_DARKGREY);
+
+        // 2行目: RSSIバー & 音量
+        canvas.setCursor(5, 25);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.setTextSize(1);
+        canvas.print("SIG");
+        int rssiBar = map(rssi, 0, 60, 0, 180);
+        canvas.drawRect(35, 25, 184, 10, TFT_WHITE);
+        canvas.fillRect(37, 27, constrain(rssiBar, 0, 180), 6, (rssi > 30) ? TFT_GREEN : TFT_YELLOW);
+        canvas.setCursor(230, 25);
+        canvas.printf("V:%d", currentVolume);
+
+        // 3行目: GPS & QZSS 情報
+        canvas.setCursor(5, 42);
+        canvas.setTextColor(TFT_CYAN);
+        canvas.setTextSize(1);
+        canvas.printf("SATS:%d  TIME:%s", svCount, timeStr);
+        
+        // 4行目 (最下段): システムステータス
+        canvas.fillRect(0, 58, 284, 18, (currentState == DECODE_FRAME) ? TFT_RED : 0x2104);
+        canvas.setCursor(10, 62);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.setTextSize(1);
+        canvas.print(currentState == DECODE_FRAME ? "!!! EMERGENCY SIGNAL DETECTED !!!" : "SYSTEM MONITORING - READY");
+
+        canvas.pushSprite(0, 0);
+      }
+    }
+
+    // 2. シリアルコマンド処理
+    while (Serial.available() > 0) {
+      char c = Serial.read();
+      if (c == '\n' || c == '\r') {
+        if (cmdIndex > 0) {
+          cmdBuffer[cmdIndex] = '\0';
+          processCommand(cmdBuffer);
+          cmdIndex = 0;
+        }
+      } else if (cmdIndex < 31) {
+        cmdBuffer[cmdIndex++] = c;
+      }
+    }
+
+    // 2. GPS / UBX 解析処理
+    while (gpsSerial.available()) {
+      uint8_t c = gpsSerial.read();
+
+      // UBXステートマシン
+      switch (ubxState) {
+        case SYNC1: if (c == 0xB5) ubxState = SYNC2; break;
+        case SYNC2: if (c == 0x62) ubxState = CLASS; else ubxState = SYNC1; break;
+        case CLASS: msgClass = c; expectedCkA = c; expectedCkB = c; ubxState = ID; break;
+        case ID: msgId = c; expectedCkA += c; expectedCkB += expectedCkA; ubxState = LEN1; break;
+        case LEN1: msgLen = c; expectedCkA += c; expectedCkB += expectedCkA; ubxState = LEN2; break;
+        case LEN2:
+          msgLen |= (c << 8); expectedCkA += c; expectedCkB += expectedCkA;
+          if (msgLen > 256) ubxState = SYNC1;
+          else { payloadIndex = 0; ubxState = msgLen > 0 ? PAYLOAD : CK_A; }
+          break;
+        case PAYLOAD:
+          ubxPayload[payloadIndex++] = c; expectedCkA += c; expectedCkB += expectedCkA;
+          if (payloadIndex == msgLen) ubxState = CK_A;
+          break;
+        case CK_A: if (c == expectedCkA) ubxState = CK_B; else ubxState = SYNC1; break;
+        case CK_B:
+          if (c == expectedCkB) {
+            if (msgClass == 0x02 && msgId == 0x13) {
+              uint8_t gnssId = ubxPayload[0];
+              uint8_t svId = ubxPayload[1];
+              // デバッグログが多すぎるため、通常パケットの受信通知はコメントアウト
+              // Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS: %d, SV: %d\n", gnssId, svId);
+              if (gnssId == 5) {
+                uint8_t numWords = ubxPayload[4];
+                if (numWords == 8) {
+                  uint8_t l1s_msg[32];
+                  // 8ワード(256bit)をビッグエンディアン配列に変換
+                  for (int i = 0; i < 8; i++) {
+                    uint32_t w = ubxPayload[8 + i * 4] | (ubxPayload[9 + i * 4] << 8) |
+                                 (ubxPayload[10 + i * 4] << 16) | (ubxPayload[11 + i * 4] << 24);
+                    l1s_msg[i * 4 + 0] = (w >> 24) & 0xFF;
+                    l1s_msg[i * 4 + 1] = (w >> 16) & 0xFF;
+                    l1s_msg[i * 4 + 2] = (w >> 8) & 0xFF;
+                    l1s_msg[i * 4 + 3] = w & 0xFF;
+                  }
+
+                  uint32_t preamble = getUbxBits(l1s_msg, 0, 8);
+                  uint32_t mt = getUbxBits(l1s_msg, 8, 6);
+
+                  if (preamble == 0x53) {
+                    if (mt == 43) {
+                      Serial.println("\n=============================================");
+                      Serial.println(">>> 🚨 QZSS 災危通報 (MT43) 受信! 🚨 <<<");
+                      uint32_t reportClass = getUbxBits(l1s_msg, 14, 3);
+                      uint32_t disasterCat = getUbxBits(l1s_msg, 17, 4);
+                      uint32_t month = getUbxBits(l1s_msg, 21, 4);
+                      uint32_t day   = getUbxBits(l1s_msg, 25, 5);
+                      uint32_t hour  = getUbxBits(l1s_msg, 30, 5);
+                      uint32_t min   = getUbxBits(l1s_msg, 35, 6);
+                      
+                      const char* rcStr = "不明";
+                      if (reportClass == 1) rcStr = "緊急 (Maximum)";
+                      else if (reportClass == 2) rcStr = "優先 (Prior)";
+                      else if (reportClass == 3) rcStr = "通常 (Normal)";
+                      else if (reportClass == 7) rcStr = "訓練/テスト (Test)";
+
+                      const char* dcStr = "不明";
+                      if (disasterCat == 1) dcStr = "地震動 (Earthquake/EEW)";
+                      else if (disasterCat == 2) dcStr = "津波 (Tsunami)";
+                      else if (disasterCat == 8) dcStr = "弾道ミサイル (Missile)";
+                      else if (disasterCat == 14) dcStr = "その他の情報 (Periodic Heartbeat)";
+
+                      Serial.printf("区分: %d - %s\n", reportClass, rcStr);
+                      Serial.printf("災害種別: %d - %s\n", disasterCat, dcStr);
+                      Serial.printf("発表日時: %d月%d日 %02d:%02d\n", month, day, hour, min);
+                      
+                      // 41ビット目以降の可変長ペイロードをHexダンプ (約26バイト)
+                      Serial.print("ペイロード(Hex): ");
+                      for(int b = 41; b < 250; b += 8) {
+                        int len = (250 - b >= 8) ? 8 : (250 - b);
+                        Serial.printf("%02X ", getUbxBits(l1s_msg, b, len));
+                      }
+                      Serial.println();
+
+                      switch (disasterCat) {
+                        case 1: { // 地震動 (Earthquake)
+                           uint32_t infoType = getUbxBits(l1s_msg, 41, 1);
+                           if (infoType == 1) {
+                              Serial.println(">> 情報タイプ: 緊急地震速報 (EEW)");
+                              // TODO: 震度、震央、マグニチュードなどのデコード
+                           } else {
+                              Serial.println(">> 情報タイプ: 震度速報");
+                           }
+                           break;
+                        }
+                        case 2: // 津波
+                           Serial.println(">> 情報タイプ: 津波警報・注意報");
+                           // TODO: 津波予報区、予想高さのデコード
+                           break;
+                        case 3: // 火山
+                        case 4: // 降灰
+                           Serial.println(">> 情報タイプ: 噴火警報・降灰予報");
+                           break;
+                        case 5: // 気象
+                        case 6: // 洪水
+                        case 7: // 土砂災害
+                           Serial.println(">> 情報タイプ: 気象特別警報・洪水・土砂災害");
+                           break;
+                        case 8:  // 弾道ミサイル
+                        case 9:  // 航空攻撃
+                        case 10: // ゲリラ
+                        case 11: // 大規模テロ
+                           Serial.println(">> 情報タイプ: Jアラート (国民保護情報)");
+                           // TODO: 対象地域コードのデコード
+                           break;
+                        case 14: // その他の情報 / 死活監視
+                           Serial.println(">> (平常時の定期通信パケットです)");
+                           break;
+                        default:
+                           Serial.println(">> 未知・その他の情報タイプ");
+                           break;
+                      }
+                      Serial.println("=============================================\n");
+                    } else {
+                      // MT43以外は定期的に送信されるので、通常は表示しない（MT50などはSBAS等）
+                      // Serial.printf("[QZSS L1S] MT: %d\n", mt);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          ubxState = SYNC1;
+          break;
+      }
+      
+      // NMEAパススルー表示（ログが流れるのを防ぐためコメントアウト）
+      /*
+      if (ubxState == SYNC1 && (c == '$' || c == '\n' || c == '\r' || (c >= 32 && c <= 126))) {
+        Serial.write(c);
+      }
+      */
+    }
+
+    // WDTリセットとCPU負荷軽減のためのスリープ (10ms)
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+// Core 1: EWS (FSK) 音声解析 (メインループ)
 
 void loop() {
   if (nextBitStartTime == 0)
@@ -223,8 +617,13 @@ void loop() {
       isEndSignal = (prePart == 0x03);
       currentSyncType = syncPart;
 
-      // ラジオの状態を取得
-      int rssi = rx.getRssi();
+      // ラジオの状態を取得 (Mutex保護)
+      int rssi = 0;
+      if (xSemaphoreTake(i2cMutex, (TickType_t)10)) {
+        rssi = rx.getRssi();
+        xSemaphoreGive(i2cMutex);
+      }
+      
       Serial.printf("\n[SYNC FOUND: %s %s | RSSI: %d]\n",
                     isEndSignal ? "END" : "START",
                     (syncPart == SYNC_TYPE_II) ? "Type II" : "Type I", rssi);
@@ -296,30 +695,6 @@ void loop() {
       }
     }
     break;
-  }
-
-  // シリアルコマンド処理 (ラジオ操作)
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-
-    if (cmd.startsWith("v")) { // 音量変更 (例: v10)
-      currentVolume = cmd.substring(1).toInt();
-      rx.setVolume(currentVolume);
-      Serial.printf("Volume set to: %d\n", currentVolume);
-    } else if (cmd.length() >= 3 &&
-               cmd.indexOf('.') > 0) { // 周波数変更 (例: 80.0)
-      float freq = cmd.toFloat();
-      if (freq >= 76.0 && freq <= 108.0) {
-        int f = (int)(freq * 100);
-        rx.setFrequency(f);
-        Serial.printf("Frequency set to: %d.%d MHz\n", f / 100, f % 100);
-      }
-    } else if (cmd == "status") { // 現在の状態表示
-      Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d\n",
-                    rx.getFrequency() / 100, rx.getFrequency() % 100,
-                    currentVolume, rx.getRssi());
-    }
   }
 
   // デバッグ：信号強度がある程度ある時だけビットをドットで表示
