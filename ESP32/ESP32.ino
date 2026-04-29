@@ -10,6 +10,54 @@
 
 #include <RDA5807.h>
 #include <Wire.h>
+#define LGFX_USE_V1
+#include <LovyanGFX.hpp>
+
+// --- LovyanGFX (ST7789) 設定 ---
+class LGFX : public lgfx::LGFX_Device {
+  lgfx::Panel_ST7789  _panel_instance;
+  lgfx::Bus_SPI       _bus_instance;
+  lgfx::Light_PWM     _light_instance;
+
+public:
+  LGFX(void) {
+    {
+      auto cfg = _bus_instance.config();
+      cfg.spi_host = VSPI_HOST;
+      cfg.spi_mode = 3;
+      cfg.freq_write = 20000000; // 20MHz (安定性重視)
+      cfg.pin_sclk = 14; 
+      cfg.pin_mosi = 13;
+      cfg.pin_miso = -1;
+      cfg.pin_dc   = 15;
+      _bus_instance.config(cfg);
+      _panel_instance.setBus(&_bus_instance);
+    }
+    {
+      auto cfg = _panel_instance.config();
+      cfg.pin_cs           = 5;
+      cfg.pin_rst          = 27;
+      cfg.panel_width      = 76;
+      cfg.panel_height     = 284;
+      cfg.offset_x         = 82;
+      cfg.offset_y         = 18;
+      cfg.offset_rotation  = 0;
+      _panel_instance.config(cfg);
+    }
+    {
+      auto cfg = _light_instance.config();
+      cfg.pin_bl = 21;
+      cfg.invert = false;
+      cfg.freq   = 44100;
+      cfg.pwm_channel = 7;
+      _light_instance.config(cfg);
+      _panel_instance.setLight(&_light_instance);
+    }
+    setPanel(&_panel_instance);
+  }
+};
+LGFX tft;
+LGFX_Sprite canvas(&tft); // フリッカー防止用の仮想画面
 
 // 設定
 #define FM_STATION 8520 // 受信周波数
@@ -21,9 +69,12 @@
 #define I2C_SCL 18              // 新しいSCLピン (D18)
 
 // GPS (NEO-M8N) 設定
-#define GPS_RX_PIN 22 // NEO-M8NのTXを接続
-#define GPS_TX_PIN 23 // NEO-M8NのRXを接続
+#define GPS_RX_PIN 22
+#define GPS_TX_PIN 23
 HardwareSerial gpsSerial(1);
+
+// 本体LED (アラート用)
+#define ALERT_LED 2
 
 // アナログEWS仕様に基づく定数
 const uint16_t SYNC_TYPE_I = 0x0E6D;  // 0000 1110 0110 1101
@@ -49,10 +100,10 @@ int bitIndex = 0;
 uint32_t bitBuffer = 0;
 int displayBitCount = 0;
 unsigned long nextBitStartTime = 0;
-int currentVolume = 5; // 現在の音量を保持する変数
+int currentVolume = 1; // 音量初期値
 RDA5807 rx;
 
-// FreeRTOS (デュアルコア・排他制御) 関連
+// FreeRTOS関連
 SemaphoreHandle_t i2cMutex;
 TaskHandle_t taskCore0Handle;
 
@@ -203,7 +254,7 @@ void setup() {
     rx.setup();
     rx.setBand(1);
     rx.setFrequency(FM_STATION);
-    rx.setVolume(1);
+    rx.setVolume(currentVolume);
     rx.setMute(false);
     rx.setMono(true);
     xSemaphoreGive(i2cMutex);
@@ -213,7 +264,23 @@ void setup() {
   Serial.printf("Tuned to: %d.%d MHz\n", FM_STATION / 100, FM_STATION % 100);
   Serial.println("EWS Decoder Ready (Core 1).");
 
-  // Core 0 でバックグラウンドタスクを起動
+  // 液晶初期化
+  tft.init();
+  tft.setRotation(1); // 横向き(ランドスケープ)に設定
+  tft.fillScreen(TFT_BLACK);
+  tft.println("Initializing...");
+  tft.setBrightness(128);
+
+  // スプライト（仮想画面）の作成
+  canvas.createSprite(284, 76);
+  canvas.setTextColor(TFT_WHITE);
+  canvas.setTextSize(1);
+
+  // LEDの初期化
+  pinMode(ALERT_LED, OUTPUT);
+  digitalWrite(ALERT_LED, LOW);
+
+  // Core 0 でタスク起動
   xTaskCreatePinnedToCore(
     taskCore0,         /* 実行する関数 */
     "TaskCore0",       /* タスク名 */
@@ -226,7 +293,7 @@ void setup() {
   Serial.println("GPS/Command Processor Ready (Core 0).");
 }
 
-// Core 0: GPS/UBX受信 と ユーザーコマンド処理 (バックグラウンド)
+// Core 0: GPS/UBX受信 と ユーザーコマンド処理
 void processCommand(char* cmd) {
   if (cmd[0] == 'v' || cmd[0] == 'V') {
     int vol = atoi(&cmd[1]);
@@ -274,9 +341,83 @@ uint32_t getUbxBits(const uint8_t* data, int offset, int length) {
 void taskCore0(void *pvParameters) {
   char cmdBuffer[32];
   int cmdIndex = 0;
+  uint32_t lastUpdate = 0;
+  
+  // 前回の値を保持する変数 (差分更新用)
+  int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
+  char lastTimeStr[10] = "";
+  EwsState lastState = SEARCH_SYNC;
+
+  int svCount = 0;
+  char timeStr[10] = "--:--:--";
 
   for (;;) {
-    // 1. シリアルコマンド処理 (char配列で処理)
+    uint32_t now = millis();
+
+    // 1. 液晶描画処理 (1000ms周期 + 差分更新)
+    if (now - lastUpdate > 1000) {
+      lastUpdate = now;
+      int freq = 0, rssi = 0;
+      
+      if (xSemaphoreTake(i2cMutex, (TickType_t)5)) {
+        freq = rx.getFrequency();
+        rssi = rx.getRssi();
+        xSemaphoreGive(i2cMutex);
+      }
+
+      // 変化があったかチェック (RSSIは変動しやすいため、差が2以上の場合のみ更新)
+      bool changed = (freq != lastFreq) || (abs(rssi - lastRssi) > 2) || 
+                     (svCount != lastSvCount) || (currentVolume != lastVol) ||
+                     (strcmp(timeStr, lastTimeStr) != 0) || (currentState != lastState);
+
+      if (changed) {
+        lastFreq = freq; lastRssi = rssi; lastSvCount = svCount;
+        lastVol = currentVolume; lastState = currentState;
+        strcpy(lastTimeStr, timeStr);
+
+        canvas.fillScreen(TFT_BLACK);
+
+        // 1行目: [タイトル] と [周波数]
+        canvas.setTextSize(2);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.setCursor(5, 2);
+        canvas.print("EWS/QZSS"); 
+        
+        canvas.setTextColor(TFT_ORANGE);
+        canvas.setCursor(155, 2);
+        canvas.printf("%d.%dMHz", freq / 100, (freq % 100) / 10);
+
+        canvas.drawFastHLine(0, 20, 284, TFT_DARKGREY);
+
+        // 2行目: RSSIバー & 音量
+        canvas.setCursor(5, 25);
+        canvas.setTextColor(TFT_LIGHTGREY);
+        canvas.setTextSize(1);
+        canvas.print("SIG");
+        int rssiBar = map(rssi, 0, 60, 0, 180);
+        canvas.drawRect(35, 25, 184, 10, TFT_WHITE);
+        canvas.fillRect(37, 27, constrain(rssiBar, 0, 180), 6, (rssi > 30) ? TFT_GREEN : TFT_YELLOW);
+        canvas.setCursor(230, 25);
+        canvas.printf("V:%d", currentVolume);
+
+        // 3行目: GPS & QZSS 情報
+        canvas.setCursor(5, 42);
+        canvas.setTextColor(TFT_CYAN);
+        canvas.setTextSize(1);
+        canvas.printf("SATS:%d  TIME:%s", svCount, timeStr);
+        
+        // 4行目 (最下段): システムステータス
+        canvas.fillRect(0, 58, 284, 18, (currentState == DECODE_FRAME) ? TFT_RED : 0x2104);
+        canvas.setCursor(10, 62);
+        canvas.setTextColor(TFT_WHITE);
+        canvas.setTextSize(1);
+        canvas.print(currentState == DECODE_FRAME ? "!!! EMERGENCY SIGNAL DETECTED !!!" : "SYSTEM MONITORING - READY");
+
+        canvas.pushSprite(0, 0);
+      }
+    }
+
+    // 2. シリアルコマンド処理
     while (Serial.available() > 0) {
       char c = Serial.read();
       if (c == '\n' || c == '\r') {
