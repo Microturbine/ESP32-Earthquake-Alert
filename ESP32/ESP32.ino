@@ -259,6 +259,18 @@ void processCommand(char* cmd) {
   }
 }
 
+uint32_t getUbxBits(const uint8_t* data, int offset, int length) {
+  uint32_t result = 0;
+  for (int i = 0; i < length; i++) {
+    int bitPos = offset + i;
+    int byteIdx = bitPos / 8;
+    int bitIdx = 7 - (bitPos % 8);
+    uint8_t bit = (data[byteIdx] >> bitIdx) & 1;
+    result = (result << 1) | bit;
+  }
+  return result;
+}
+
 void taskCore0(void *pvParameters) {
   char cmdBuffer[32];
   int cmdIndex = 0;
@@ -304,18 +316,118 @@ void taskCore0(void *pvParameters) {
             if (msgClass == 0x02 && msgId == 0x13) {
               uint8_t gnssId = ubxPayload[0];
               uint8_t svId = ubxPayload[1];
-              Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS: %d, SV: %d\n", gnssId, svId);
-              if (gnssId == 5) Serial.println(">>> 🛰 QZSS (みちびき) サブフレームデータ捕捉! <<<");
+              // デバッグログが多すぎるため、通常パケットの受信通知はコメントアウト
+              // Serial.printf("\n[UBX] RXM-SFRBX Received! GNSS: %d, SV: %d\n", gnssId, svId);
+              if (gnssId == 5) {
+                uint8_t numWords = ubxPayload[4];
+                if (numWords == 8) {
+                  uint8_t l1s_msg[32];
+                  // 8ワード(256bit)をビッグエンディアン配列に変換
+                  for (int i = 0; i < 8; i++) {
+                    uint32_t w = ubxPayload[8 + i * 4] | (ubxPayload[9 + i * 4] << 8) |
+                                 (ubxPayload[10 + i * 4] << 16) | (ubxPayload[11 + i * 4] << 24);
+                    l1s_msg[i * 4 + 0] = (w >> 24) & 0xFF;
+                    l1s_msg[i * 4 + 1] = (w >> 16) & 0xFF;
+                    l1s_msg[i * 4 + 2] = (w >> 8) & 0xFF;
+                    l1s_msg[i * 4 + 3] = w & 0xFF;
+                  }
+
+                  uint32_t preamble = getUbxBits(l1s_msg, 0, 8);
+                  uint32_t mt = getUbxBits(l1s_msg, 8, 6);
+
+                  if (preamble == 0x53) {
+                    if (mt == 43) {
+                      Serial.println("\n=============================================");
+                      Serial.println(">>> 🚨 QZSS 災危通報 (MT43) 受信! 🚨 <<<");
+                      uint32_t reportClass = getUbxBits(l1s_msg, 14, 3);
+                      uint32_t disasterCat = getUbxBits(l1s_msg, 17, 4);
+                      uint32_t month = getUbxBits(l1s_msg, 21, 4);
+                      uint32_t day   = getUbxBits(l1s_msg, 25, 5);
+                      uint32_t hour  = getUbxBits(l1s_msg, 30, 5);
+                      uint32_t min   = getUbxBits(l1s_msg, 35, 6);
+                      
+                      const char* rcStr = "不明";
+                      if (reportClass == 1) rcStr = "緊急 (Maximum)";
+                      else if (reportClass == 2) rcStr = "優先 (Prior)";
+                      else if (reportClass == 3) rcStr = "通常 (Normal)";
+                      else if (reportClass == 7) rcStr = "訓練/テスト (Test)";
+
+                      const char* dcStr = "不明";
+                      if (disasterCat == 1) dcStr = "地震動 (Earthquake/EEW)";
+                      else if (disasterCat == 2) dcStr = "津波 (Tsunami)";
+                      else if (disasterCat == 8) dcStr = "弾道ミサイル (Missile)";
+                      else if (disasterCat == 14) dcStr = "その他の情報 (Periodic Heartbeat)";
+
+                      Serial.printf("区分: %d - %s\n", reportClass, rcStr);
+                      Serial.printf("災害種別: %d - %s\n", disasterCat, dcStr);
+                      Serial.printf("発表日時: %d月%d日 %02d:%02d\n", month, day, hour, min);
+                      
+                      // 41ビット目以降の可変長ペイロードをHexダンプ (約26バイト)
+                      Serial.print("ペイロード(Hex): ");
+                      for(int b = 41; b < 250; b += 8) {
+                        int len = (250 - b >= 8) ? 8 : (250 - b);
+                        Serial.printf("%02X ", getUbxBits(l1s_msg, b, len));
+                      }
+                      Serial.println();
+
+                      switch (disasterCat) {
+                        case 1: { // 地震動 (Earthquake)
+                           uint32_t infoType = getUbxBits(l1s_msg, 41, 1);
+                           if (infoType == 1) {
+                              Serial.println(">> 情報タイプ: 緊急地震速報 (EEW)");
+                              // TODO: 震度、震央、マグニチュードなどのデコード
+                           } else {
+                              Serial.println(">> 情報タイプ: 震度速報");
+                           }
+                           break;
+                        }
+                        case 2: // 津波
+                           Serial.println(">> 情報タイプ: 津波警報・注意報");
+                           // TODO: 津波予報区、予想高さのデコード
+                           break;
+                        case 3: // 火山
+                        case 4: // 降灰
+                           Serial.println(">> 情報タイプ: 噴火警報・降灰予報");
+                           break;
+                        case 5: // 気象
+                        case 6: // 洪水
+                        case 7: // 土砂災害
+                           Serial.println(">> 情報タイプ: 気象特別警報・洪水・土砂災害");
+                           break;
+                        case 8:  // 弾道ミサイル
+                        case 9:  // 航空攻撃
+                        case 10: // ゲリラ
+                        case 11: // 大規模テロ
+                           Serial.println(">> 情報タイプ: Jアラート (国民保護情報)");
+                           // TODO: 対象地域コードのデコード
+                           break;
+                        case 14: // その他の情報 / 死活監視
+                           Serial.println(">> (平常時の定期通信パケットです)");
+                           break;
+                        default:
+                           Serial.println(">> 未知・その他の情報タイプ");
+                           break;
+                      }
+                      Serial.println("=============================================\n");
+                    } else {
+                      // MT43以外は定期的に送信されるので、通常は表示しない（MT50などはSBAS等）
+                      // Serial.printf("[QZSS L1S] MT: %d\n", mt);
+                    }
+                  }
+                }
+              }
             }
           }
           ubxState = SYNC1;
           break;
       }
       
-      // NMEAパススルー表示
+      // NMEAパススルー表示（ログが流れるのを防ぐためコメントアウト）
+      /*
       if (ubxState == SYNC1 && (c == '$' || c == '\n' || c == '\r' || (c >= 32 && c <= 126))) {
         Serial.write(c);
       }
+      */
     }
 
     // WDTリセットとCPU負荷軽減のためのスリープ (10ms)
