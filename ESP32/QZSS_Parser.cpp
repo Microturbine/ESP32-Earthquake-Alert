@@ -1,5 +1,6 @@
 #include "QZSS_Parser.h"
 #include "Settings.h"
+#include "QZSS_Tables.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -103,22 +104,31 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         qzssState = 2;
         qzssTimeout = millis() + 30000;
         
-        if (disasterCat == 1) { // EEW
+        if (disasterCat == 1) { // EEW (Earthquake Early Warning)
             uint32_t it = getUbxBits(l1s_msg, 41, 2);
             if (it == 0) {
-                uint32_t mag = getUbxBits(l1s_msg, 76, 7); // Magnitude (Ma)
-                uint32_t intLower = getUbxBits(l1s_msg, 93, 4); // Intensity Lower (Ll)
-                float m = mag / 10.0;
-                snprintf(alertText, sizeof(alertText), "緊急地震速報(M%.1f/震度階%d)", m, intLower);
-                Serial.printf("\n[MT43 EEW] Magnitude: %.1f, Intensity: %d\n", m, intLower);
+                uint32_t mag = getUbxBits(l1s_msg, 105, 7); // Magnitude (Ma)
+                uint32_t epi = getUbxBits(l1s_msg, 112, 10); // Epicenter (Ep)
+                uint32_t intLower = getUbxBits(l1s_msg, 122, 4); // Intensity Lower (Ll)
+                
+                const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
+                if (!epiName) epiName = "不明";
+
+                snprintf(alertText, sizeof(alertText), "緊急地震速報(%s/M%.1f/震度%d)", epiName, mag/10.0, intLower);
+                Serial.printf("\n[MT43 EEW] Epicenter: %s, Mag: %.1f, Intensity: %d\n", epiName, mag/10.0, intLower);
             } else if (it == 2) {
                 snprintf(alertText, sizeof(alertText), "緊急地震速報 取消");
             }
         } else if (disasterCat == 5) { // Tsunami
             uint32_t it = getUbxBits(l1s_msg, 41, 2);
             if (it == 0) {
-                uint32_t warningCode = getUbxBits(l1s_msg, 60, 4);
-                snprintf(alertText, sizeof(alertText), "津波警報 (コード:%d)", warningCode);
+                uint32_t code = getUbxBits(l1s_msg, 80, 4); // Dw
+                uint32_t reg = getUbxBits(l1s_msg, 100, 10); // Pl_1
+                
+                const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
+                if (!regName) regName = "一部地域";
+
+                snprintf(alertText, sizeof(alertText), "津波警報(%s/コード%d)", regName, code);
             } else if (it == 2) {
                 snprintf(alertText, sizeof(alertText), "津波警報 解除");
             }
@@ -129,33 +139,26 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
 }
 
 void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
-    // MT44 format: PAB(8), MT(6), SD(10), CAMF(122), EX(74), RSV(6), CRC(24)
-    // CAMF starts at bit 24.
     uint32_t msgType = getUbxBits(l1s_msg, 24, 2); // A1
     uint32_t country = getUbxBits(l1s_msg, 26, 9); // A2
     uint32_t provider = getUbxBits(l1s_msg, 35, 5); // A3
     uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // A4
-    uint32_t severity = getUbxBits(l1s_msg, 47, 2); // A5
     uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // A11
 
-    if (country == 0b001101111) { // Japan
+    if (country == 463) { // Japan (001101111 binary = 463 decimal)
         if (msgType == 0) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
             snprintf(alertText, sizeof(alertText), "DCX 訓練/試験メッセージ");
-        } else if (msgType == 1 || msgType == 2) { // Alert or Update
-            qzssState = 3; // J-Alert / L-Alert
+        } else if (msgType == 1 || msgType == 2) {
+            qzssState = 3; 
             qzssTimeout = millis() + 30000;
             
-            if (provider == 2 || provider == 3) {
-                snprintf(alertText, sizeof(alertText), "Jアラート受信! (Cat:%d)", hazardCat);
-            } else if (provider == 1 || provider == 4) {
-                snprintf(alertText, sizeof(alertText), "Lアラート/避難情報 (Cat:%d)", hazardCat);
-            } else {
-                snprintf(alertText, sizeof(alertText), "DCX 警報 (Prov:%d)", provider);
-            }
-            Serial.printf("\n[MT44] Provider: %d, Category: %d, Severity: %d, Guidance: %d\n", provider, hazardCat, severity, guidance);
-        } else if (msgType == 3) { // All Clear
+            const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
+            snprintf(alertText, sizeof(alertText), "%s受信 (Cat:%d)", typeStr, hazardCat);
+            
+            Serial.printf("\n[MT44] %s: Category: %d, Guidance: %d\n", typeStr, hazardCat, guidance);
+        } else if (msgType == 3) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
             snprintf(alertText, sizeof(alertText), "DCX 警報解除");

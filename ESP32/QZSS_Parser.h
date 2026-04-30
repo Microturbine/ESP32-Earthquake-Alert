@@ -23,7 +23,7 @@ private:
 
     int qzssState;
     uint32_t qzssTimeout;
-    char alertText[64];
+    char alertText[128];
 
     void processRxmSfrbx();
     void decodeMT43(const uint8_t* l1s_msg);
