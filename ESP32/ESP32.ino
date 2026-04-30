@@ -351,6 +351,9 @@ void taskCore0(void *pvParameters) {
   int svCount = 0;
   char timeStr[10] = "--:--:--";
 
+  char nmeaBuffer[82];
+  int nmeaIndex = 80;
+
   for (;;) {
     uint32_t now = millis();
 
@@ -439,6 +442,40 @@ void taskCore0(void *pvParameters) {
     // 2. GPS / UBX 解析処理
     while (gpsSerial.available()) {
       uint8_t c = gpsSerial.read();
+
+      // --- NMEA パース処理 ($GNGGA または $GPGGA) ---
+      if (c == '$') {
+        nmeaIndex = 0;
+      }
+      if (nmeaIndex < 80) {
+        nmeaBuffer[nmeaIndex++] = c;
+      }
+      if (c == '\n' && nmeaIndex > 6) {
+        nmeaBuffer[nmeaIndex] = '\0';
+        if (nmeaBuffer[0] == '$' && nmeaBuffer[3] == 'G' && nmeaBuffer[4] == 'G' && nmeaBuffer[5] == 'A') {
+          int commaCount = 0;
+          char* timeStart = NULL;
+          char* satStart = NULL;
+          for (int i = 0; i < nmeaIndex; i++) {
+            if (nmeaBuffer[i] == ',') {
+              commaCount++;
+              if (commaCount == 1) timeStart = &nmeaBuffer[i+1];
+              if (commaCount == 7) satStart = &nmeaBuffer[i+1];
+            }
+          }
+          if (timeStart && satStart) {
+            svCount = atoi(satStart);
+            if (timeStart[0] >= '0' && timeStart[0] <= '9' && timeStart[1] >= '0') {
+              int h = (timeStart[0]-'0')*10 + (timeStart[1]-'0');
+              int m = (timeStart[2]-'0')*10 + (timeStart[3]-'0');
+              int s = (timeStart[4]-'0')*10 + (timeStart[5]-'0');
+              h = (h + 9) % 24; // JST (+9)
+              sprintf(timeStr, "%02d:%02d:%02d", h, m, s);
+            }
+          }
+        }
+        nmeaIndex = 80; // 次の '$' まで記録しない
+      }
 
       // UBXステートマシン
       switch (ubxState) {
