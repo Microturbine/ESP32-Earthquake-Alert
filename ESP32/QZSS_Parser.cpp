@@ -98,7 +98,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
     if (reportClass == 7) {
         qzssState = 1;
         qzssTimeout = millis() + 15000;
-        snprintf(alertText, sizeof(alertText), "✅ QZSS 訓練/試験(DC:%d)", disasterCat);
+        snprintf(alertText, sizeof(alertText), "QZSS 訓練/試験(DC:%d)", disasterCat);
     } else if (reportClass >= 1 && reportClass <= 3 && disasterCat != 14) {
         qzssState = 2;
         qzssTimeout = millis() + 30000;
@@ -109,21 +109,21 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 uint32_t mag = getUbxBits(l1s_msg, 76, 7); // Magnitude (Ma)
                 uint32_t intLower = getUbxBits(l1s_msg, 93, 4); // Intensity Lower (Ll)
                 float m = mag / 10.0;
-                snprintf(alertText, sizeof(alertText), "🚨 緊急地震速報(M%.1f/震度階%d)", m, intLower);
+                snprintf(alertText, sizeof(alertText), "緊急地震速報(M%.1f/震度階%d)", m, intLower);
                 Serial.printf("\n[MT43 EEW] Magnitude: %.1f, Intensity: %d\n", m, intLower);
             } else if (it == 2) {
-                snprintf(alertText, sizeof(alertText), "✅ 緊急地震速報 取消");
+                snprintf(alertText, sizeof(alertText), "緊急地震速報 取消");
             }
         } else if (disasterCat == 5) { // Tsunami
             uint32_t it = getUbxBits(l1s_msg, 41, 2);
             if (it == 0) {
                 uint32_t warningCode = getUbxBits(l1s_msg, 60, 4);
-                snprintf(alertText, sizeof(alertText), "🚨 津波警報 (コード:%d)", warningCode);
+                snprintf(alertText, sizeof(alertText), "津波警報 (コード:%d)", warningCode);
             } else if (it == 2) {
-                snprintf(alertText, sizeof(alertText), "✅ 津波警報 解除");
+                snprintf(alertText, sizeof(alertText), "津波警報 解除");
             }
         } else {
-            snprintf(alertText, sizeof(alertText), "🚨 QZSS 災害情報 (種別:%d)", disasterCat);
+            snprintf(alertText, sizeof(alertText), "QZSS 災害情報 (種別:%d)", disasterCat);
         }
     }
 }
@@ -142,23 +142,23 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
         if (msgType == 0) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
-            snprintf(alertText, sizeof(alertText), "✅ DCX 訓練/試験メッセージ");
+            snprintf(alertText, sizeof(alertText), "DCX 訓練/試験メッセージ");
         } else if (msgType == 1 || msgType == 2) { // Alert or Update
             qzssState = 3; // J-Alert / L-Alert
             qzssTimeout = millis() + 30000;
             
             if (provider == 2 || provider == 3) {
-                snprintf(alertText, sizeof(alertText), "🚨 Jアラート受信! (Cat:%d)", hazardCat);
+                snprintf(alertText, sizeof(alertText), "Jアラート受信! (Cat:%d)", hazardCat);
             } else if (provider == 1 || provider == 4) {
-                snprintf(alertText, sizeof(alertText), "🚨 Lアラート/避難情報 (Cat:%d)", hazardCat);
+                snprintf(alertText, sizeof(alertText), "Lアラート/避難情報 (Cat:%d)", hazardCat);
             } else {
-                snprintf(alertText, sizeof(alertText), "🚨 DCX 警報 (Prov:%d)", provider);
+                snprintf(alertText, sizeof(alertText), "DCX 警報 (Prov:%d)", provider);
             }
             Serial.printf("\n[MT44] Provider: %d, Category: %d, Severity: %d, Guidance: %d\n", provider, hazardCat, severity, guidance);
         } else if (msgType == 3) { // All Clear
             qzssState = 1;
             qzssTimeout = millis() + 15000;
-            snprintf(alertText, sizeof(alertText), "✅ DCX 警報解除");
+            snprintf(alertText, sizeof(alertText), "DCX 警報解除");
         }
     }
 }

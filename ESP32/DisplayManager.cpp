@@ -94,7 +94,7 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
       if (qzssText) canvas->print(qzssText);
-      else canvas->print("🚨 QZSS 災害情報を受信しました！ 🚨");
+      else canvas->print("QZSS 災害情報を受信しました！");
     } else if (qzssState == 1) {
       canvas->fillRect(0, 58, 284, 18, TFT_MAGENTA);
       canvas->setCursor(5, 61);
@@ -102,7 +102,7 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
       if (qzssText) canvas->print(qzssText);
-      else canvas->print("✅ QZSS 訓練/試験メッセージを受信中");
+      else canvas->print("QZSS 訓練/試験メッセージを受信中");
     } else {
       canvas->fillRect(0, 58, 284, 18, (ewsState == 1) ? TFT_RED : 0x2104);
       canvas->setCursor(5, 61);

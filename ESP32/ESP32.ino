@@ -32,7 +32,16 @@ EwsState lastState = SEARCH_SYNC;
 int lastQzssState = 0;
 
 void processCommand(char* cmd) {
-    if (strncmp(cmd, "area ", 5) == 0) {
+    if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
+        Serial.println("\n--- コマンド一覧 ---");
+        Serial.println("help または ?     : このヘルプを表示します");
+        Serial.println("status            : 現在のステータス(周波数、音量、RSSI、設定地域コード)を表示");
+        Serial.println("v[数字]           : 音量を設定します (例: v5 で音量5に設定 [0-15])");
+        Serial.println("area [コード]     : アラート対象とする地域コードを設定します (例: area 13)");
+        Serial.println("                    ※都道府県コード等 (例: 13=東京, 27=大阪, 0=全域受信)");
+        Serial.println("[数字]            : FMラジオの周波数を設定します (例: 85.2 で 85.2MHz)");
+        Serial.println("--------------------\n");
+    } else if (strncmp(cmd, "area ", 5) == 0) {
         uint32_t code = strtoul(&cmd[5], NULL, 10);
         settings.setRegion(code);
         Serial.printf("Region set to: %d\n", code);
