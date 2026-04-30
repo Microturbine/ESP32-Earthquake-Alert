@@ -19,7 +19,15 @@ public:
     
 private:
     LGFX tft;
-    LGFX_Sprite* canvas;
+    bool initialDraw = true;
+    int lastFreq = -1;
+    int lastRssi = -1;
+    int lastVol = -1;
+    int lastSvCount = -1;
+    char lastTimeStr[10] = "";
+    int lastEwsState = -1;
+    int lastQzssState = -1;
+    char lastQzssText[64] = "";
 };
 
 extern DisplayManager displayManager;

@@ -10,7 +10,7 @@
 #include "QZSS_Parser.h"
 
 // Hardware Pins
-#define AUDIO_IN_PIN 4
+#define AUDIO_IN_PIN 34
 #define I2C_SDA 19
 #define I2C_SCL 18
 #define GPS_RX_PIN 22
@@ -157,7 +157,12 @@ void taskCore0(void *pvParameters) {
     }
 }
 
+#include <WiFi.h>
+
 void setup() {
+    WiFi.mode(WIFI_OFF); // Disable WiFi to reduce RF and power noise
+    btStop();            // Disable Bluetooth
+    
     Serial.begin(115200);
     settings.load();
     
