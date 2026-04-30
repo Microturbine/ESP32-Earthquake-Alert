@@ -347,9 +347,13 @@ void taskCore0(void *pvParameters) {
   int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
   char lastTimeStr[10] = "";
   EwsState lastState = SEARCH_SYNC;
+  int lastQzssState = 0;
 
   int svCount = 0;
   char timeStr[10] = "--:--:--";
+  
+  int qzssState = 0; // 0:なし, 1:テスト配信, 2:本物の災害情報
+  uint32_t qzssTimeout = 0;
 
   char nmeaBuffer[82];
   int nmeaIndex = 80;
@@ -368,14 +372,20 @@ void taskCore0(void *pvParameters) {
         xSemaphoreGive(i2cMutex);
       }
 
+      // QZSSアラートのタイムアウト処理 (15秒/30秒経過で消灯)
+      if (qzssState > 0 && now > qzssTimeout) {
+        qzssState = 0;
+        digitalWrite(ALERT_LED, LOW);
+      }
+
       // 変化があったかチェック (RSSIは変動しやすいため、差が2以上の場合のみ更新)
       bool changed = (freq != lastFreq) || (abs(rssi - lastRssi) > 2) || 
                      (svCount != lastSvCount) || (currentVolume != lastVol) ||
-                     (strcmp(timeStr, lastTimeStr) != 0) || (currentState != lastState);
+                     (strcmp(timeStr, lastTimeStr) != 0) || (currentState != lastState) || (qzssState != lastQzssState);
 
       if (changed) {
         lastFreq = freq; lastRssi = rssi; lastSvCount = svCount;
-        lastVol = currentVolume; lastState = currentState;
+        lastVol = currentVolume; lastState = currentState; lastQzssState = qzssState;
         strcpy(lastTimeStr, timeStr);
 
         canvas.fillScreen(TFT_BLACK);
@@ -413,12 +423,28 @@ void taskCore0(void *pvParameters) {
         canvas.printf("SATS:%d  TIME:%s", svCount, timeStr);
         
         // 4行目 (最下段): システムステータス
-        canvas.fillRect(0, 58, 284, 18, (currentState == DECODE_FRAME) ? TFT_RED : 0x2104);
-        canvas.setCursor(5, 61); // 枠の中央になるようY座標を少し調整
-        canvas.setTextColor(TFT_WHITE);
-        canvas.setFont(&fonts::lgfxJapanGothic_12); // 日本語ゴシック 12px
-        canvas.setTextSize(1);
-        canvas.print(currentState == DECODE_FRAME ? "警報信号を受信・解析中..." : "システム監視中 - 待機状態");
+        if (qzssState == 2) {
+          canvas.fillRect(0, 58, 284, 18, TFT_RED);
+          canvas.setCursor(5, 61);
+          canvas.setTextColor(TFT_WHITE);
+          canvas.setFont(&fonts::lgfxJapanGothic_12);
+          canvas.setTextSize(1);
+          canvas.print("🚨 QZSS 災害情報を受信しました！ 🚨");
+        } else if (qzssState == 1) {
+          canvas.fillRect(0, 58, 284, 18, TFT_MAGENTA);
+          canvas.setCursor(5, 61);
+          canvas.setTextColor(TFT_WHITE);
+          canvas.setFont(&fonts::lgfxJapanGothic_12);
+          canvas.setTextSize(1);
+          canvas.print("✅ QZSS 訓練/試験メッセージを受信中");
+        } else {
+          canvas.fillRect(0, 58, 284, 18, (currentState == DECODE_FRAME) ? TFT_RED : 0x2104);
+          canvas.setCursor(5, 61); // 枠の中央になるようY座標を少し調整
+          canvas.setTextColor(TFT_WHITE);
+          canvas.setFont(&fonts::lgfxJapanGothic_12); // 日本語ゴシック 12px
+          canvas.setTextSize(1);
+          canvas.print(currentState == DECODE_FRAME ? "FM 警報信号を受信・解析中..." : "システム監視中 - 待機状態");
+        }
         canvas.setFont(&fonts::Font0); // 標準フォントに戻す
 
         canvas.pushSprite(0, 0);
