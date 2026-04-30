@@ -145,7 +145,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
     uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // A4
     uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // A11
 
-    if (country == 463) { // Japan (001101111 binary = 463 decimal)
+    if (country == 111) { // Japan (001101111 binary = 111 decimal)
         if (msgType == 0) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
