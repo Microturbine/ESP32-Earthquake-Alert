@@ -42,7 +42,7 @@ void DisplayManager::init() {
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
-    tft.println("Initializing...");
+    tft.println("初期化中...");
     tft.setBrightness(128);
     
     canvas = new LGFX_Sprite(&tft);
@@ -54,7 +54,7 @@ void DisplayManager::init() {
 void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState, int qzssState, const char* qzssText) {
     canvas->fillScreen(TFT_BLACK);
 
-    // Row 1
+    // 1行目
     canvas->setFont(&fonts::lgfxJapanGothic_16);
     canvas->setTextSize(1);
     canvas->setTextColor(TFT_WHITE);
@@ -69,7 +69,7 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
 
     canvas->drawFastHLine(0, 20, 284, TFT_DARKGREY);
 
-    // Row 2: RSSI & Volume
+    // 2行目: RSSIと音量
     canvas->setCursor(5, 25);
     canvas->setTextColor(TFT_LIGHTGREY);
     canvas->setTextSize(1);
@@ -80,13 +80,13 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     canvas->setCursor(230, 25);
     canvas->printf("V:%d", vol);
 
-    // Row 3: GPS
+    // 3行目: GPS
     canvas->setCursor(5, 42);
     canvas->setTextColor(TFT_CYAN);
     canvas->setTextSize(1);
     canvas->printf("SATS:%d  TIME:%s", svCount, timeStr);
     
-    // Row 4: Status
+    // 4行目: ステータス
     if (qzssState == 2 || qzssState == 3) {
       canvas->fillRect(0, 58, 284, 18, TFT_RED);
       canvas->setCursor(5, 61);

@@ -7,7 +7,7 @@ class Settings {
 public:
     int defaultFreq;
     int volume;
-    uint32_t myRegionCode; // JMA Region Code for filtering
+    uint32_t myRegionCode; // フィルタ用気象庁地域コード
 
     Settings();
     void load();

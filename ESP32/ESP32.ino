@@ -1,6 +1,6 @@
 /*
- * ESP32 Disaster Alert Decoder (Refactored)
- * Hardware: ESP32 + RDA5807M + NEO-M8N + ST7789
+ * ESP32 災害警報デコーダ (リファクタリング版)
+ * ハードウェア: ESP32 + RDA5807M + NEO-M8N + ST7789
  */
 
 #include <Arduino.h>
@@ -9,7 +9,7 @@
 #include "EWS_Decoder.h"
 #include "QZSS_Parser.h"
 
-// Hardware Pins
+// ハードウェアピン
 #define AUDIO_IN_PIN 4
 #define I2C_SDA 19
 #define I2C_SCL 18
@@ -25,7 +25,7 @@ char timeStr[10] = "--:--:--";
 char nmeaBuffer[82];
 int nmeaIndex = 80;
 
-// Variables for diff rendering
+// 差分描画用変数
 int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
 char lastTimeStr[10] = "";
 EwsState lastState = SEARCH_SYNC;
@@ -44,18 +44,18 @@ void processCommand(char* cmd) {
     } else if (strncmp(cmd, "area ", 5) == 0) {
         uint32_t code = strtoul(&cmd[5], NULL, 10);
         settings.setRegion(code);
-        Serial.printf("Region set to: %d\n", code);
+        Serial.printf("地域コード設定: %d\n", code);
     } else if (cmd[0] == 'v' || cmd[0] == 'V') {
         int vol = atoi(&cmd[1]);
         if (vol >= 0 && vol <= 15) {
             settings.setVolume(vol);
             ewsDecoder.setVolume(vol);
-            Serial.printf("Volume set to: %d\n", vol);
+            Serial.printf("音量設定: %d\n", vol);
         }
     } else if (strcmp(cmd, "status") == 0) {
         int freq = ewsDecoder.getFrequency();
         int rssi = ewsDecoder.getRssi();
-        Serial.printf("Current Status: %d.%d MHz, Vol:%d, RSSI:%d, Region:%d\n", 
+        Serial.printf("現在ステータス: %d.%d MHz, 音量:%d, RSSI:%d, 地域コード:%d\n", 
                       freq / 100, freq % 100, settings.volume, rssi, settings.myRegionCode);
     } else {
         float f = atof(cmd);
@@ -63,7 +63,7 @@ void processCommand(char* cmd) {
             int freqInt = (int)(f * 100);
             settings.setFreq(freqInt);
             ewsDecoder.setFrequency(freqInt);
-            Serial.printf("Frequency set to: %d.%d MHz\n", freqInt / 100, freqInt % 100);
+            Serial.printf("周波数設定: %d.%d MHz\n", freqInt / 100, freqInt % 100);
         }
     }
 }
@@ -76,7 +76,7 @@ void taskCore0(void *pvParameters) {
     for (;;) {
         uint32_t now = millis();
 
-        // 1. LCD update
+        // 1. LCD更新
         if (now - lastUpdate > 1000) {
             lastUpdate = now;
             int freq = ewsDecoder.getFrequency();
@@ -103,7 +103,7 @@ void taskCore0(void *pvParameters) {
             }
         }
 
-        // 2. Serial Commands
+        // 2. シリアルコマンド
         while (Serial.available() > 0) {
             char c = Serial.read();
             if (c == '\n' || c == '\r') {
@@ -142,7 +142,7 @@ void taskCore0(void *pvParameters) {
                             int h = (timeStart[0]-'0')*10 + (timeStart[1]-'0');
                             int m = (timeStart[2]-'0')*10 + (timeStart[3]-'0');
                             int s = (timeStart[4]-'0')*10 + (timeStart[5]-'0');
-                            h = (h + 9) % 24; // JST
+                            h = (h + 9) % 24; // JST (日本標準時)
                             sprintf(timeStr, "%02d:%02d:%02d", h, m, s);
                         }
                     }

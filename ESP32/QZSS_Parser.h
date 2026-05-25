@@ -8,8 +8,8 @@ public:
     QzssParser();
     void parseUbx(uint8_t c);
     
-    // Status accessors
-    int getQzssState(); // 0: None, 1: Test, 2: Real Alert
+    // ステータス取得用
+    int getQzssState(); // 0:なし, 1:試験, 2:災害警報
     const char* getAlertText();
     void updateTimeouts(uint32_t now);
 

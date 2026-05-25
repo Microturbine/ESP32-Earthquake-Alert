@@ -54,7 +54,7 @@ void QzssParser::parseUbx(uint8_t c) {
     case CK_A: if (c == expectedCkA) ubxState = CK_B; else ubxState = SYNC1; break;
     case CK_B:
         if (c == expectedCkB) {
-            if (msgClass == 0x02 && msgId == 0x13) { // RXM-SFRBX
+            if (msgClass == 0x02 && msgId == 0x13) { // RXM-SFRBXメッセージ
                 processRxmSfrbx();
             }
         }
@@ -65,7 +65,7 @@ void QzssParser::parseUbx(uint8_t c) {
 
 void QzssParser::processRxmSfrbx() {
     uint8_t gnssId = ubxPayload[0];
-    if (gnssId == 5) { // QZSS
+    if (gnssId == 5) { // 準天頂衛星(QZSS)
         uint8_t numWords = ubxPayload[4];
         if (numWords == 8) {
             uint8_t l1s_msg[32];
@@ -104,26 +104,26 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         qzssState = 2;
         qzssTimeout = millis() + 30000;
         
-        if (disasterCat == 1) { // EEW (Earthquake Early Warning)
+        if (disasterCat == 1) { // 緊急地震速報(EEW)
             uint32_t it = getUbxBits(l1s_msg, 41, 2);
             if (it == 0) {
-                uint32_t mag = getUbxBits(l1s_msg, 105, 7); // Magnitude (Ma)
-                uint32_t epi = getUbxBits(l1s_msg, 112, 10); // Epicenter (Ep)
-                uint32_t intLower = getUbxBits(l1s_msg, 122, 4); // Intensity Lower (Ll)
+                uint32_t mag = getUbxBits(l1s_msg, 105, 7); // マグニチュード(Ma)
+                uint32_t epi = getUbxBits(l1s_msg, 112, 10); // 震央(Ep)
+                uint32_t intLower = getUbxBits(l1s_msg, 122, 4); // 震度（下限）(Ll)
                 
                 const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
                 if (!epiName) epiName = "不明";
 
                 snprintf(alertText, sizeof(alertText), "緊急地震速報(%s/M%.1f/震度%d)", epiName, mag/10.0, intLower);
-                Serial.printf("\n[MT43 EEW] Epicenter: %s, Mag: %.1f, Intensity: %d\n", epiName, mag/10.0, intLower);
+                Serial.printf("\n[MT43 緊急地震速報] 震央: %s, M: %.1f, 震度: %d\n", epiName, mag/10.0, intLower);
             } else if (it == 2) {
                 snprintf(alertText, sizeof(alertText), "緊急地震速報 取消");
             }
-        } else if (disasterCat == 5) { // Tsunami
+        } else if (disasterCat == 5) { // 津波警報
             uint32_t it = getUbxBits(l1s_msg, 41, 2);
             if (it == 0) {
-                uint32_t code = getUbxBits(l1s_msg, 80, 4); // Dw
-                uint32_t reg = getUbxBits(l1s_msg, 100, 10); // Pl_1
+                uint32_t code = getUbxBits(l1s_msg, 80, 4); // 警報種別(Dw)
+                uint32_t reg = getUbxBits(l1s_msg, 100, 10); // 対象地域(Pl_1)
                 
                 const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
                 if (!regName) regName = "一部地域";
@@ -139,13 +139,13 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
 }
 
 void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
-    uint32_t msgType = getUbxBits(l1s_msg, 24, 2); // A1
-    uint32_t country = getUbxBits(l1s_msg, 26, 9); // A2
-    uint32_t provider = getUbxBits(l1s_msg, 35, 5); // A3
-    uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // A4
-    uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // A11
+    uint32_t msgType = getUbxBits(l1s_msg, 24, 2); // メッセージ種別(A1)
+    uint32_t country = getUbxBits(l1s_msg, 26, 9); // 国コード(A2)
+    uint32_t provider = getUbxBits(l1s_msg, 35, 5); // プロバイダ(A3)
+    uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // 災害カテゴリ(A4)
+    uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // 避難勧告(A11)
 
-    if (country == 463) { // Japan (001101111 binary = 463 decimal)
+    if (country == 463) { // 日本国コード (2進数001101111 = 10進数463)
         if (msgType == 0) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
@@ -157,7 +157,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
             snprintf(alertText, sizeof(alertText), "%s受信 (Cat:%d)", typeStr, hazardCat);
             
-            Serial.printf("\n[MT44] %s: Category: %d, Guidance: %d\n", typeStr, hazardCat, guidance);
+            Serial.printf("\n[MT44] %s: 災害分類: %d, 避難指示等: %d\n", typeStr, hazardCat, guidance);
         } else if (msgType == 3) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;

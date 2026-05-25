@@ -197,7 +197,7 @@ void EwsDecoder::processAudio() {
         frameBits[bitIndex++] = bit ? 1 : 0;
 
         if (bitIndex >= 100) {
-            Serial.println("\n--- [EWS Block Decoded] ---");
+            Serial.println("\n--- [EWSブロック復調完了] ---");
             if (!isEndSignal) {
                 if (currentSyncType == SYNC_TYPE_II)
                     Serial.println("【 津波警報：開始 】");

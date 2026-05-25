@@ -8,7 +8,7 @@ struct QzssCodeMap {
     const char* name;
 };
 
-// Table 4.1.2-7 Epicenter and Hypocenter (Full)
+// 表4.1.2-7 震央・震源（完全版）
 const QzssCodeMap EPICENTER_TABLE[] = {
     {11, "北海道地方"},
     {12, "東北地方"},
@@ -354,7 +354,7 @@ const QzssCodeMap EPICENTER_TABLE[] = {
     {1000, "その他の震央地名"},
 };
 
-// Table 4.1.2-24 Tsunami Forecast Region (Full)
+// 表4.1.2-24 津波予報区（完全版）
 const QzssCodeMap TSUNAMI_REGION_TABLE[] = {
     {100, "北海道太平洋沿岸東部"},
     {101, "北海道太平洋沿岸中部"},

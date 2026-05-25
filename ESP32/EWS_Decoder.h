@@ -17,7 +17,7 @@ public:
     int getRssi();
     EwsState getState();
     
-    // Made public so main task can use it if needed, or we just encapsulate
+    // メインタスク共用/カプセル化用
     SemaphoreHandle_t i2cMutex;
 
 private:
