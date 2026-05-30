@@ -51,7 +51,7 @@ void DisplayManager::init() {
     canvas->setTextSize(1);
 }
 
-void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState, int qzssState, const char* qzssText) {
+void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState, int qzssState, const char* qzssText, int ewsAlertState, const char* ewsAlertText) {
     canvas->fillScreen(TFT_BLACK);
 
     // 1行目
@@ -69,46 +69,50 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
 
     canvas->drawFastHLine(0, 20, 284, TFT_DARKGREY);
 
-    // 2行目: RSSIと音量
-    canvas->setCursor(5, 25);
-    canvas->setTextColor(TFT_LIGHTGREY);
-    canvas->setTextSize(1);
-    canvas->print("SIG");
-    int rssiBar = map(rssi, 0, 60, 0, 180);
-    canvas->drawRect(35, 25, 184, 10, TFT_WHITE);
-    canvas->fillRect(37, 27, constrain(rssiBar, 0, 180), 6, (rssi > 30) ? TFT_GREEN : TFT_YELLOW);
-    canvas->setCursor(230, 25);
-    canvas->printf("V:%d", vol);
+    bool alertActive = (qzssState == 2 || qzssState == 3 || ewsAlertState == 1);
+    bool testActive = (qzssState == 1);
 
-    // 3行目: GPS
-    canvas->setCursor(5, 42);
-    canvas->setTextColor(TFT_CYAN);
-    canvas->setTextSize(1);
-    canvas->printf("SATS:%d  TIME:%s", svCount, timeStr);
-    
-    // 4行目: ステータス
-    if (qzssState == 2 || qzssState == 3) {
-      canvas->fillRect(0, 58, 284, 18, TFT_RED);
-      canvas->setCursor(5, 61);
+    if (alertActive || testActive) {
+      uint16_t bgColor = testActive ? TFT_MAGENTA : TFT_RED;
+      canvas->fillRect(0, 20, 284, 56, bgColor);
+      canvas->setCursor(5, 24);
       canvas->setTextColor(TFT_WHITE);
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
-      if (qzssText) canvas->print(qzssText);
-      else canvas->print("QZSS 災害情報を受信しました！");
-    } else if (qzssState == 1) {
-      canvas->fillRect(0, 58, 284, 18, TFT_MAGENTA);
-      canvas->setCursor(5, 61);
-      canvas->setTextColor(TFT_WHITE);
-      canvas->setFont(&fonts::lgfxJapanGothic_12);
-      canvas->setTextSize(1);
-      if (qzssText) canvas->print(qzssText);
-      else canvas->print("QZSS 訓練/試験メッセージを受信中");
+      canvas->setTextWrap(true);
+      
+      const char* alertMsg = nullptr;
+      if (qzssState > 0) {
+          alertMsg = qzssText ? qzssText : (testActive ? "QZSS 訓練/試験メッセージを受信中" : "QZSS 災害情報を受信しました！");
+      } else {
+          alertMsg = ewsAlertText ? ewsAlertText : "FM 警報を受信しました！";
+      }
+      canvas->print(alertMsg);
     } else {
+      // 2行目: RSSIと音量
+      canvas->setCursor(5, 25);
+      canvas->setTextColor(TFT_LIGHTGREY);
+      canvas->setTextSize(1);
+      canvas->print("SIG");
+      int rssiBar = map(rssi, 0, 60, 0, 180);
+      canvas->drawRect(35, 25, 184, 10, TFT_WHITE);
+      canvas->fillRect(37, 27, constrain(rssiBar, 0, 180), 6, (rssi > 30) ? TFT_GREEN : TFT_YELLOW);
+      canvas->setCursor(230, 25);
+      canvas->printf("V:%d", vol);
+
+      // 3行目: GPS
+      canvas->setCursor(5, 42);
+      canvas->setTextColor(TFT_CYAN);
+      canvas->setTextSize(1);
+      canvas->printf("SATS:%d  TIME:%s", svCount, timeStr);
+      
+      // 4行目: ステータス
       canvas->fillRect(0, 58, 284, 18, (ewsState == 1) ? TFT_RED : 0x2104);
       canvas->setCursor(5, 61);
       canvas->setTextColor(TFT_WHITE);
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
+      canvas->setTextWrap(false);
       canvas->print(ewsState == 1 ? "FM 警報信号を受信・解析中..." : "システム監視中 - 待機状態");
     }
     canvas->setFont(&fonts::Font0);

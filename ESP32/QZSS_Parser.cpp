@@ -23,8 +23,25 @@ void QzssParser::updateTimeouts(uint32_t now) {
     }
 }
 
+void QzssParser::resetAlert() {
+    qzssState = 0;
+    alertText[0] = '\0';
+}
+
 uint32_t QzssParser::getUbxBits(const uint8_t* data, int offset, int length) {
     uint32_t result = 0;
+    for (int i = 0; i < length; i++) {
+        int bitPos = offset + i;
+        int byteIdx = bitPos / 8;
+        int bitIdx = 7 - (bitPos % 8);
+        uint8_t bit = (data[byteIdx] >> bitIdx) & 1;
+        result = (result << 1) | bit;
+    }
+    return result;
+}
+
+uint64_t QzssParser::getUbxBits64(const uint8_t* data, int offset, int length) {
+    uint64_t result = 0;
     for (int i = 0; i < length; i++) {
         int bitPos = offset + i;
         int byteIdx = bitPos / 8;
@@ -92,6 +109,24 @@ void QzssParser::processRxmSfrbx() {
     }
 }
 
+static const char* getIntensityName(uint32_t code) {
+    switch (code) {
+        case 1: return "0";
+        case 2: return "1";
+        case 3: return "2";
+        case 4: return "3";
+        case 5: return "4";
+        case 6: return "5弱";
+        case 7: return "5強";
+        case 8: return "6弱";
+        case 9: return "6強";
+        case 10: return "7";
+        case 11: return "~程度以上";
+        case 14: return "なし";
+        default: return "不明";
+    }
+}
+
 void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
     uint32_t reportClass = getUbxBits(l1s_msg, 14, 3);
     uint32_t disasterCat = getUbxBits(l1s_msg, 17, 4);
@@ -100,40 +135,179 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         qzssState = 1;
         qzssTimeout = millis() + 15000;
         snprintf(alertText, sizeof(alertText), "QZSS 訓練/試験(DC:%d)", disasterCat);
-    } else if (reportClass >= 1 && reportClass <= 3 && disasterCat != 14) {
+        return;
+    }
+    
+    if (reportClass >= 1 && reportClass <= 3) {
         qzssState = 2;
         qzssTimeout = millis() + 30000;
         
-        if (disasterCat == 1) { // 緊急地震速報(EEW)
-            uint32_t it = getUbxBits(l1s_msg, 41, 2);
-            if (it == 0) {
-                uint32_t mag = getUbxBits(l1s_msg, 105, 7); // マグニチュード(Ma)
-                uint32_t epi = getUbxBits(l1s_msg, 112, 10); // 震央(Ep)
-                uint32_t intLower = getUbxBits(l1s_msg, 122, 4); // 震度（下限）(Ll)
-                
-                const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
-                if (!epiName) epiName = "不明";
+        uint32_t it = getUbxBits(l1s_msg, 41, 2);
+        if (it == 2) {
+            snprintf(alertText, sizeof(alertText), "災害警報(DC:%d) 取消/解除", disasterCat);
+            return;
+        }
 
-                snprintf(alertText, sizeof(alertText), "緊急地震速報(%s/M%.1f/震度%d)", epiName, mag/10.0, intLower);
-                Serial.printf("\n[MT43 緊急地震速報] 震央: %s, M: %.1f, 震度: %d\n", epiName, mag/10.0, intLower);
-            } else if (it == 2) {
-                snprintf(alertText, sizeof(alertText), "緊急地震速報 取消");
-            }
-        } else if (disasterCat == 5) { // 津波警報
-            uint32_t it = getUbxBits(l1s_msg, 41, 2);
-            if (it == 0) {
-                uint32_t code = getUbxBits(l1s_msg, 80, 4); // 警報種別(Dw)
-                uint32_t reg = getUbxBits(l1s_msg, 100, 10); // 対象地域(Pl_1)
-                
-                const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
-                if (!regName) regName = "一部地域";
+        switch (disasterCat) {
+        case 1: { // 緊急地震速報 (EEW)
+            uint32_t mag = getUbxBits(l1s_msg, 105, 7); // Ma
+            uint32_t epi = getUbxBits(l1s_msg, 112, 10); // Ep
+            uint32_t intLower = getUbxBits(l1s_msg, 122, 4); // Ll
+            
+            const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
+            if (!epiName) epiName = "不明";
+            
+            snprintf(alertText, sizeof(alertText), "緊急地震(%s/M%.1f/震度%s)", epiName, mag/10.0, getIntensityName(intLower));
+            break;
+        }
+        case 2: { // 震源
+            uint32_t mag = getUbxBits(l1s_msg, 106, 7); // Ma
+            uint32_t epi = getUbxBits(l1s_msg, 113, 10); // Ep
+            uint32_t depth = getUbxBits(l1s_msg, 97, 9); // De
+            
+            uint32_t latNs = getUbxBits(l1s_msg, 123, 1);
+            uint32_t latD = getUbxBits(l1s_msg, 124, 7);
+            uint32_t latM = getUbxBits(l1s_msg, 131, 6);
+            uint32_t lonEw = getUbxBits(l1s_msg, 143, 1);
+            uint32_t lonD = getUbxBits(l1s_msg, 144, 8);
+            uint32_t lonM = getUbxBits(l1s_msg, 152, 6);
 
-                snprintf(alertText, sizeof(alertText), "津波警報(%s/コード%d)", regName, code);
-            } else if (it == 2) {
-                snprintf(alertText, sizeof(alertText), "津波警報 解除");
+            const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
+            if (!epiName) epiName = "不明";
+
+            snprintf(alertText, sizeof(alertText), "震源(%s/M%.1f/深さ%dkm/%s%d度%d分)", 
+                     epiName, mag/10.0, depth == 511 ? 0 : depth, latNs ? "S" : "N", latD, latM, lonEw ? "W" : "E", lonD, lonM);
+            break;
+        }
+        case 3: { // 震度
+            uint32_t maxInt = 0;
+            uint32_t maxPl = 0;
+            for (int i = 0; i < 16; i++) {
+                uint32_t es = getUbxBits(l1s_msg, 70 + i*9, 3);
+                uint32_t pl = getUbxBits(l1s_msg, 73 + i*9, 6);
+                if (es > maxInt && pl > 0) {
+                    maxInt = es;
+                    maxPl = pl;
+                }
             }
-        } else {
+            if (maxInt > 0) {
+                const char* plName = getQzssName(maxPl, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
+                if (!plName) plName = "各地";
+                snprintf(alertText, sizeof(alertText), "震度速報(最大震度%s / %s等)", getIntensityName(maxInt), plName);
+            } else {
+                snprintf(alertText, sizeof(alertText), "各地の震度情報");
+            }
+            break;
+        }
+        case 4: { // 南海トラフ
+            uint32_t is = getUbxBits(l1s_msg, 54, 4);
+            const char* infoName = "関連情報";
+            if (is == 1) infoName = "調査中A";
+            else if (is == 2) infoName = "調査中B";
+            else if (is == 3) infoName = "調査中C";
+            else if (is == 4) infoName = "巨大地震警戒";
+            else if (is == 5) infoName = "巨大地震注意";
+            else if (is == 6) infoName = "調査終了";
+            
+            snprintf(alertText, sizeof(alertText), "南海トラフ情報(%s)", infoName);
+            break;
+        }
+        case 5: { // 津波警報
+            uint32_t code = getUbxBits(l1s_msg, 80, 4); // Dw
+            uint32_t reg = getUbxBits(l1s_msg, 100, 10); // Pl_1
+            const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
+            if (!regName) regName = "一部沿岸";
+
+            const char* warnName = "注意報/警報";
+            if (code == 3) warnName = "津波警報";
+            else if (code == 4) warnName = "大津波警報";
+            else if (code == 5) warnName = "大津波警報発表";
+            else if (code == 2) warnName = "解除";
+
+            snprintf(alertText, sizeof(alertText), "%s(%s等)", warnName, regName);
+            break;
+        }
+        case 6: { // 北西太平洋津波
+            uint32_t tp = getUbxBits(l1s_msg, 54, 3);
+            uint32_t reg = getUbxBits(l1s_msg, 77, 7); // Pl_1
+            const char* regName = getQzssName(reg, COASTAL_REGION_TABLE, sizeof(COASTAL_REGION_TABLE)/sizeof(QzssCodeMap));
+            if (!regName) regName = "沿岸";
+            snprintf(alertText, sizeof(alertText), "北西太平洋津波(%s/Tp:%d)", regName, tp);
+            break;
+        }
+        case 8: { // 火山
+            uint32_t dw = getUbxBits(l1s_msg, 70, 7);
+            uint32_t vo = getUbxBits(l1s_msg, 77, 12);
+            const char* voName = getQzssName(vo, VOLCANO_TABLE, sizeof(VOLCANO_TABLE)/sizeof(QzssCodeMap));
+            if (!voName) voName = "付近の火山";
+            
+            const char* levelStr = "警報";
+            if (dw == 11) levelStr = "レベル1";
+            else if (dw == 12) levelStr = "レベル2";
+            else if (dw == 13) levelStr = "レベル3";
+            else if (dw == 14) levelStr = "レベル4";
+            else if (dw == 15) levelStr = "レベル5";
+            else if (dw == 52) levelStr = "噴火";
+            else if (dw == 62) levelStr = "噴火確認";
+
+            snprintf(alertText, sizeof(alertText), "火山警報(%s/%s)", voName, levelStr);
+            break;
+        }
+        case 9: { // 降灰
+            uint32_t vo = getUbxBits(l1s_msg, 72, 12);
+            const char* voName = getQzssName(vo, VOLCANO_TABLE, sizeof(VOLCANO_TABLE)/sizeof(QzssCodeMap));
+            if (!voName) voName = "火山";
+            snprintf(alertText, sizeof(alertText), "降灰予報(%s)", voName);
+            break;
+        }
+        case 10: { // 気象
+            uint32_t ww = getUbxBits(l1s_msg, 57, 5); // Ww_1
+            uint32_t pl = getUbxBits(l1s_msg, 62, 19); // Pl_1
+            const char* wwName = getQzssName(ww, WEATHER_SUB_CAT_TABLE, sizeof(WEATHER_SUB_CAT_TABLE)/sizeof(QzssCodeMap));
+            if (!wwName) wwName = "気象特別警報";
+            const char* plName = getQzssName(pl, PREFECTURAL_FORECAST_TABLE, sizeof(PREFECTURAL_FORECAST_TABLE)/sizeof(QzssCodeMap));
+            if (!plName) plName = "一部地域";
+            
+            snprintf(alertText, sizeof(alertText), "%s(%s)", wwName, plName);
+            break;
+        }
+        case 11: { // 洪水
+            uint32_t lv = getUbxBits(l1s_msg, 93, 4); // Lv_1
+            uint64_t riverCode = getUbxBits64(l1s_msg, 53, 40); // Pl_1
+            
+            // Serial.printf("[Debug MT43 Flood] lv:%d, riverCode:%llu (0x%llX)\n", lv, riverCode, riverCode);
+
+            const char* riverName = getQzssRiverName(riverCode, RIVER_CODE_TABLE, sizeof(RIVER_CODE_TABLE)/sizeof(QzssRiverCodeMap));
+            if (!riverName) riverName = "指定河川";
+
+            const char* warnLevelStr = "警戒情報";
+            if (lv == 1) warnLevelStr = "解除";
+            else if (lv == 2) warnLevelStr = "氾濫警戒";
+            else if (lv == 3) warnLevelStr = "氾濫危険";
+            else if (lv == 4) warnLevelStr = "氾濫発生";
+
+            snprintf(alertText, sizeof(alertText), "洪水予報:%s(%s)", riverName, warnLevelStr);
+            break;
+        }
+        case 12: { // 台風
+            uint32_t tn = getUbxBits(l1s_msg, 88, 7); // Tn (台風番号)
+            uint32_t pr = getUbxBits(l1s_msg, 144, 11); // Pr (気圧)
+            snprintf(alertText, sizeof(alertText), "台風第%d号情報(中心気圧:%dhPa)", tn, pr);
+            break;
+        }
+        case 14: { // 海上
+            uint32_t dw = getUbxBits(l1s_msg, 54, 5); // Dw_1
+            uint32_t pl = getUbxBits(l1s_msg, 59, 14); // Pl_1
+            const char* dwName = getQzssName(dw, MARINE_WARNING_TABLE, sizeof(MARINE_WARNING_TABLE)/sizeof(QzssCodeMap));
+            if (!dwName) dwName = "警報";
+            const char* plName = getQzssName(pl, MARINE_FORECAST_TABLE, sizeof(MARINE_FORECAST_TABLE)/sizeof(QzssCodeMap));
+            if (!plName) plName = "海域";
+            snprintf(alertText, sizeof(alertText), "海上%s(%s)", dwName, plName);
+            break;
+        }
+        default:
             snprintf(alertText, sizeof(alertText), "QZSS 災害情報 (種別:%d)", disasterCat);
+            break;
         }
     }
 }
@@ -145,7 +319,9 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
     uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // 災害カテゴリ(A4)
     uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // 避難勧告(A11)
 
-    if (country == 463) { // 日本国コード (2進数001101111 = 10進数463)
+    // Serial.printf("[Debug decodeMT44] msgType:%d, country:%d, provider:%d, hazard:%d\n", msgType, country, provider, hazardCat);
+
+    if (country == 111) { // 日本国コード (2進数001101111 = 10進数111)
         if (msgType == 0) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
@@ -154,10 +330,99 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             qzssState = 3; 
             qzssTimeout = millis() + 30000;
             
+            // 1. 災害種別の日本語化
+            const char* hazardName = getQzssName(hazardCat, DCX_HAZARD_TABLE, sizeof(DCX_HAZARD_TABLE)/sizeof(QzssCodeMap));
+            if (!hazardName) hazardName = "災害情報";
+
+            // 2. 避難ガイダンステキストの構築
+            char guidanceStr[64] = "指示なし";
+            if (guidance > 0) {
+                const char* directText = getQzssName(guidance, DCX_GUIDANCE_TEXT_TABLE, sizeof(DCX_GUIDANCE_TEXT_TABLE)/sizeof(QzssCodeMap));
+                if (directText) {
+                    strncpy(guidanceStr, directText, sizeof(guidanceStr));
+                } else {
+                    // 合成ルール
+                    uint32_t basic = (guidance >> 8) & 0x03;
+                    uint32_t info = guidance & 0xFF;
+                    const char* basicStr = "";
+                    if (basic == 1) basicStr = "留まれ:";
+                    else if (basic == 2) basicStr = "向かえ:";
+                    else if (basic == 3) basicStr = "離れろ:";
+                    
+                    const char* infoStr = "";
+                    if (info == 1) infoStr = "頑丈な建物";
+                    else if (info == 2) infoStr = "3階以上";
+                    else if (info == 3) infoStr = "地下";
+                    else if (info == 4) infoStr = "山";
+                    else if (info == 5) infoStr = "水場";
+                    else if (info == 6) infoStr = "化学工場";
+                    else if (info == 7) infoStr = "崖";
+                    
+                    snprintf(guidanceStr, sizeof(guidanceStr), "%s%s", basicStr, infoStr);
+                }
+            }
+
+            // 3. 対象地域の構築
+            char areaStr[64] = "全国";
+            if (provider == 2 || provider == 3) { // J-Alert
+                uint32_t ex8 = getUbxBits(l1s_msg, 147, 1);
+                uint64_t ex9 = getUbxBits64(l1s_msg, 148, 64);
+                if (ex8 == 0) { // 都道府県コード
+                    int count = 0;
+                    areaStr[0] = '\0';
+                    for (int i = 1; i <= 47; i++) {
+                        uint64_t bitMask = (uint64_t)1 << (64 - i);
+                        if (ex9 & bitMask) {
+                            const char* prefName = getQzssName(i, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
+                            if (prefName) {
+                                if (count > 0) strncat(areaStr, ",", sizeof(areaStr) - strlen(areaStr) - 1);
+                                strncat(areaStr, prefName, sizeof(areaStr) - strlen(areaStr) - 1);
+                                count++;
+                                if (count >= 3) {
+                                    strncat(areaStr, "等", sizeof(areaStr) - strlen(areaStr) - 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (count == 0) strcpy(areaStr, "全国");
+                } else { // 市区町村コード
+                    int count = 0;
+                    areaStr[0] = '\0';
+                    for (int i = 0; i < 4; i++) {
+                        uint32_t cityCode = getUbxBits(l1s_msg, 148 + i*16, 16);
+                        if (cityCode > 0) {
+                            uint32_t prefId = cityCode / 1000;
+                            const char* prefName = getQzssName(prefId, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
+                            if (prefName) {
+                                if (count > 0) strncat(areaStr, ",", sizeof(areaStr) - strlen(areaStr) - 1);
+                                strncat(areaStr, prefName, sizeof(areaStr) - strlen(areaStr) - 1);
+                                count++;
+                                if (count >= 2) {
+                                    strncat(areaStr, "等市町村", sizeof(areaStr) - strlen(areaStr) - 1);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (count == 0) strcpy(areaStr, "一部市町村");
+                }
+            } else { // L-Alert / Local Government
+                uint32_t ex1 = getUbxBits(l1s_msg, 147, 16);
+                if (ex1 > 0) {
+                    uint32_t prefId = ex1 / 1000;
+                    const char* prefName = getQzssName(prefId, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
+                    if (prefName) {
+                        snprintf(areaStr, sizeof(areaStr), "%s内", prefName);
+                    } else {
+                        strcpy(areaStr, "一部地域");
+                    }
+                }
+            }
+
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
-            snprintf(alertText, sizeof(alertText), "%s受信 (Cat:%d)", typeStr, hazardCat);
-            
-            Serial.printf("\n[MT44] %s: 災害分類: %d, 避難指示等: %d\n", typeStr, hazardCat, guidance);
+            snprintf(alertText, sizeof(alertText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
+            Serial.printf("\n[MT44] %s: %s, 対象:%s, 指示:%s\n", typeStr, hazardName, areaStr, guidanceStr);
         } else if (msgType == 3) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;

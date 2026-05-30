@@ -12,6 +12,9 @@ public:
     int getQzssState(); // 0:なし, 1:試験, 2:災害警報
     const char* getAlertText();
     void updateTimeouts(uint32_t now);
+    void decodeMT43(const uint8_t* l1s_msg);
+    void decodeMT44(const uint8_t* l1s_msg);
+    void resetAlert();
 
 private:
     enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
@@ -26,9 +29,8 @@ private:
     char alertText[128];
 
     void processRxmSfrbx();
-    void decodeMT43(const uint8_t* l1s_msg);
-    void decodeMT44(const uint8_t* l1s_msg);
     uint32_t getUbxBits(const uint8_t* data, int offset, int length);
+    uint64_t getUbxBits64(const uint8_t* data, int offset, int length);
 };
 
 extern QzssParser qzssParser;

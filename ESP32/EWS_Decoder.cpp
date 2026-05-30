@@ -105,6 +105,10 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     bitIndex = 0;
     isEndSignal = false;
     currentSyncType = 0;
+    lastEwsActivityTime = 0;
+    ewsAlertState = 0;
+    ewsAlertText[0] = '\0';
+    ewsAlertTimeout = 0;
 
     i2cMutex = xSemaphoreCreateMutex();
     Wire.begin(i2c_sda, i2c_scl);
@@ -117,6 +121,27 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
         xSemaphoreGive(i2cMutex);
     }
     analogReadResolution(12);
+}
+
+void EwsDecoder::resetState() {
+    currentState = SEARCH_SYNC;
+    bitIndex = 0;
+    bitBuffer = 0;
+    lastEwsActivityTime = 0;
+    resetAlert();
+}
+
+int EwsDecoder::getEwsAlertState() { return ewsAlertState; }
+const char* EwsDecoder::getEwsAlertText() { return ewsAlertText; }
+void EwsDecoder::resetAlert() {
+    ewsAlertState = 0;
+    ewsAlertText[0] = '\0';
+    ewsAlertTimeout = 0;
+}
+void EwsDecoder::updateTimeouts(uint32_t now) {
+    if (ewsAlertState > 0 && now > ewsAlertTimeout) {
+        resetAlert();
+    }
 }
 
 void EwsDecoder::setFrequency(int freq) {
@@ -156,6 +181,11 @@ EwsState EwsDecoder::getState() {
 }
 
 void EwsDecoder::processAudio() {
+    if (currentState == DECODE_FRAME && (millis() - lastEwsActivityTime > 30000)) {
+        Serial.println("\n--- [EWSタイムアウト自動リセット] ---");
+        resetState();
+    }
+
     if (nextBitStartTime == 0)
         nextBitStartTime = micros();
 
@@ -186,6 +216,7 @@ void EwsDecoder::processAudio() {
             isEndSignal = (prePart == 0x03);
             currentSyncType = syncPart;
             currentState = DECODE_FRAME;
+            lastEwsActivityTime = millis();
             bitIndex = 20;
             for (int j = 0; j < 20; j++)
                 frameBits[19 - j] = (bitBuffer >> j) & 1;
@@ -195,6 +226,7 @@ void EwsDecoder::processAudio() {
 
     case DECODE_FRAME:
         frameBits[bitIndex++] = bit ? 1 : 0;
+        lastEwsActivityTime = millis();
 
         if (bitIndex >= 100) {
             Serial.println("\n--- [EWSブロック復調完了] ---");
@@ -237,6 +269,15 @@ void EwsDecoder::processAudio() {
 
             Serial.printf("時刻: %d時台 (%s) / 年: %d年\n", hour, timeFlag ? "前後1時間" : "現時", year_full);
             Serial.println("---------------------------");
+
+            if (!isEndSignal) {
+                ewsAlertState = 1;
+                ewsAlertTimeout = millis() + 30000;
+                const char* typeName = (currentSyncType == SYNC_TYPE_II) ? "津波警報" : "第一種警報";
+                snprintf(ewsAlertText, sizeof(ewsAlertText), "FM %s:%s", typeName, getRegionName(areaData));
+            } else {
+                resetAlert();
+            }
 
             if (!isEndSignal || bitIndex >= 192) {
                 currentState = SEARCH_SYNC;

@@ -16,6 +16,7 @@
 #define GPS_RX_PIN 22
 #define GPS_TX_PIN 23
 #define ALERT_LED 2
+#define BOOT_BUTTON_PIN 0
 
 HardwareSerial gpsSerial(1);
 TaskHandle_t taskCore0Handle;
@@ -30,6 +31,13 @@ int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
 char lastTimeStr[10] = "";
 EwsState lastState = SEARCH_SYNC;
 int lastQzssState = 0;
+EwsState lastEwsState = SEARCH_SYNC;
+int lastEwsAlertState = 0;
+
+// LED点滅制御用変数
+int ledBlinkCount = 0;
+uint32_t nextLedToggleTime = 0;
+bool ledState = false;
 
 void processCommand(char* cmd) {
     if (strcmp(cmd, "help") == 0 || strcmp(cmd, "?") == 0) {
@@ -40,11 +48,37 @@ void processCommand(char* cmd) {
         Serial.println("area [コード]     : アラート対象とする地域コードを設定します (例: area 13)");
         Serial.println("                    ※都道府県コード等 (例: 13=東京, 27=大阪, 0=全域受信)");
         Serial.println("[数字]            : FMラジオの周波数を設定します (例: 85.2 で 85.2MHz)");
+        Serial.println("test [43/44] [16進] : 指定した16進データでみちびきデコードをテストします");
+        Serial.println("                    (例: test 44 533B0604DE195524CDA30305...)");
         Serial.println("--------------------\n");
     } else if (strncmp(cmd, "area ", 5) == 0) {
         uint32_t code = strtoul(&cmd[5], NULL, 10);
         settings.setRegion(code);
         Serial.printf("地域コード設定: %d\n", code);
+    } else if (strncmp(cmd, "test ", 5) == 0) {
+        char* p = &cmd[5];
+        int mt = atoi(p);
+        while(*p && *p != ' ') p++;
+        if (*p == ' ') p++;
+        
+        uint8_t l1s_msg[32];
+        memset(l1s_msg, 0, sizeof(l1s_msg));
+        int len = strlen(p);
+        for (int i = 0; i < 32 && i * 2 < len; i++) {
+            char hex[3] = { p[i*2], p[i*2+1], '\0' };
+            l1s_msg[i] = (uint8_t)strtol(hex, NULL, 16);
+        }
+        
+        Serial.printf("デバッグデコードテスト (MT%d): ", mt);
+        for(int i=0; i<32; i++) Serial.printf("%02X", l1s_msg[i]);
+        Serial.println();
+        
+        if (mt == 43) {
+            qzssParser.decodeMT43(l1s_msg);
+        } else if (mt == 44) {
+            qzssParser.decodeMT44(l1s_msg);
+        }
+        Serial.printf("結果: %s\n", qzssParser.getAlertText());
     } else if (cmd[0] == 'v' || cmd[0] == 'V') {
         int vol = atoi(&cmd[1]);
         if (vol >= 0 && vol <= 15) {
@@ -69,12 +103,20 @@ void processCommand(char* cmd) {
 }
 
 void taskCore0(void *pvParameters) {
-    char cmdBuffer[32];
+    char cmdBuffer[128];
     int cmdIndex = 0;
     uint32_t lastUpdate = 0;
 
     for (;;) {
         uint32_t now = millis();
+
+        // Bootボタン監視（押下でLOW）
+        if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+            qzssParser.resetAlert();
+            ewsDecoder.resetState();
+            ledBlinkCount = 0;
+            digitalWrite(ALERT_LED, LOW);
+        }
 
         // 1. LCD更新
         if (now - lastUpdate > 1000) {
@@ -84,22 +126,44 @@ void taskCore0(void *pvParameters) {
             int vol = settings.volume;
             
             qzssParser.updateTimeouts(now);
+            ewsDecoder.updateTimeouts(now);
             
             int qState = qzssParser.getQzssState();
             EwsState eState = ewsDecoder.getState();
+            int eAlertState = ewsDecoder.getEwsAlertState();
+
+            // 新しいアラートの検知 (QZSSがONになった瞬間、またはEWSの受信開始時、またはEWSの警報確定時)
+            bool newAlert = (qState > 0 && lastQzssState == 0) || 
+                            (eState == DECODE_FRAME && lastEwsState == SEARCH_SYNC) ||
+                            (eAlertState > 0 && lastEwsAlertState == 0);
+            if (newAlert) {
+                ledBlinkCount = 10; // 5回点滅
+                nextLedToggleTime = millis();
+            }
 
             bool changed = (freq != lastFreq) || (abs(rssi - lastRssi) > 2) || 
                            (svCount != lastSvCount) || (vol != lastVol) ||
-                           (strcmp(timeStr, lastTimeStr) != 0) || (eState != lastState) || (qState != lastQzssState);
+                           (strcmp(timeStr, lastTimeStr) != 0) || (eState != lastState) || 
+                           (qState != lastQzssState) || (eAlertState != lastEwsAlertState);
 
             if (changed) {
                 lastFreq = freq; lastRssi = rssi; lastSvCount = svCount;
-                lastVol = vol; lastState = eState; lastQzssState = qState;
+                lastVol = vol; lastState = eState; lastQzssState = qState; 
+                lastEwsState = eState; lastEwsAlertState = eAlertState;
                 strcpy(lastTimeStr, timeStr);
                 
-                digitalWrite(ALERT_LED, (qState > 0 || eState == DECODE_FRAME) ? HIGH : LOW);
-                
-                displayManager.update(freq, rssi, vol, svCount, timeStr, eState, qState, qzssParser.getAlertText());
+                displayManager.update(freq, rssi, vol, svCount, timeStr, eState, qState, qzssParser.getAlertText(), eAlertState, ewsDecoder.getEwsAlertText());
+            }
+        }
+
+        // LED点滅の非同期処理
+        if (ledBlinkCount > 0 && now >= nextLedToggleTime) {
+            nextLedToggleTime = now + 250; // 250msおきに反転
+            ledState = !ledState;
+            digitalWrite(ALERT_LED, ledState ? HIGH : LOW);
+            ledBlinkCount--;
+            if (ledBlinkCount == 0) {
+                digitalWrite(ALERT_LED, LOW); // 消灯
             }
         }
 
@@ -112,7 +176,7 @@ void taskCore0(void *pvParameters) {
                     processCommand(cmdBuffer);
                     cmdIndex = 0;
                 }
-            } else if (cmdIndex < 31) {
+            } else if (cmdIndex < 127) {
                 cmdBuffer[cmdIndex++] = c;
             }
         }
@@ -169,6 +233,7 @@ void setup() {
     
     pinMode(ALERT_LED, OUTPUT);
     digitalWrite(ALERT_LED, LOW);
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
     
     displayManager.init();
     ewsDecoder.init(I2C_SDA, I2C_SCL, AUDIO_IN_PIN);

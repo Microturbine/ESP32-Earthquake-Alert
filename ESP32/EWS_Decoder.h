@@ -16,6 +16,13 @@ public:
     int getFrequency();
     int getRssi();
     EwsState getState();
+    void resetState();
+    
+    // アラート保持・表示用
+    int getEwsAlertState(); // 0:なし, 1:警報
+    const char* getEwsAlertText();
+    void resetAlert();
+    void updateTimeouts(uint32_t now);
     
     // メインタスク共用/カプセル化用
     SemaphoreHandle_t i2cMutex;
@@ -30,6 +37,12 @@ private:
     uint8_t frameBits[100];
     bool isEndSignal;
     uint16_t currentSyncType;
+    unsigned long lastEwsActivityTime;
+    
+    // アラート保持・表示用
+    int ewsAlertState;
+    char ewsAlertText[64];
+    unsigned long ewsAlertTimeout;
     
     float goertzel(int *samples, float targetFreq, int numSamples);
     uint32_t reverseBits(uint32_t val, int width);
