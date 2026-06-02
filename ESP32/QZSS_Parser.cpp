@@ -1,6 +1,7 @@
 #include "QZSS_Parser.h"
 #include "Settings.h"
 #include "QZSS_Tables.h"
+#include "AlertManager.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -132,9 +133,13 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
     uint32_t disasterCat = getUbxBits(l1s_msg, 17, 4);
     
     if (reportClass == 7) {
+        if (alertManager.hasRealAlert()) {
+            return;
+        }
         qzssState = 1;
         qzssTimeout = millis() + 15000;
         snprintf(alertText, sizeof(alertText), "QZSS 訓練/試験(DC:%d)", disasterCat);
+        alertManager.addAlert(alertText, 15000, true);
         return;
     }
     
@@ -145,6 +150,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         uint32_t it = getUbxBits(l1s_msg, 41, 2);
         if (it == 2) {
             snprintf(alertText, sizeof(alertText), "災害警報(DC:%d) 取消/解除", disasterCat);
+            alertManager.addAlert(alertText, 30000, false);
             return;
         }
 
@@ -309,6 +315,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             snprintf(alertText, sizeof(alertText), "QZSS 災害情報 (種別:%d)", disasterCat);
             break;
         }
+        alertManager.addAlert(alertText, 30000, false);
     }
 }
 
@@ -323,9 +330,13 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
 
     if (country == 111) { // 日本国コード (2進数001101111 = 10進数111)
         if (msgType == 0) {
+            if (alertManager.hasRealAlert()) {
+                return;
+            }
             qzssState = 1;
             qzssTimeout = millis() + 15000;
             snprintf(alertText, sizeof(alertText), "DCX 訓練/試験メッセージ");
+            alertManager.addAlert(alertText, 15000, true);
         } else if (msgType == 1 || msgType == 2) {
             qzssState = 3; 
             qzssTimeout = millis() + 30000;
@@ -423,10 +434,12 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
             snprintf(alertText, sizeof(alertText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
             Serial.printf("\n[MT44] %s: %s, 対象:%s, 指示:%s\n", typeStr, hazardName, areaStr, guidanceStr);
+            alertManager.addAlert(alertText, 30000, false);
         } else if (msgType == 3) {
             qzssState = 1;
             qzssTimeout = millis() + 15000;
             snprintf(alertText, sizeof(alertText), "DCX 警報解除");
+            alertManager.addAlert(alertText, 15000, false);
         }
     }
 }

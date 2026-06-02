@@ -1,4 +1,5 @@
 #include "EWS_Decoder.h"
+#include "AlertManager.h"
 
 EwsDecoder ewsDecoder;
 
@@ -275,8 +276,10 @@ void EwsDecoder::processAudio() {
                 ewsAlertTimeout = millis() + 30000;
                 const char* typeName = (currentSyncType == SYNC_TYPE_II) ? "津波警報" : "第一種警報";
                 snprintf(ewsAlertText, sizeof(ewsAlertText), "FM %s:%s", typeName, getRegionName(areaData));
+                alertManager.addAlert(ewsAlertText, 30000, false);
             } else {
                 resetAlert();
+                alertManager.removeAlertsStartWith("FM ");
             }
 
             if (!isEndSignal || bitIndex >= 192) {

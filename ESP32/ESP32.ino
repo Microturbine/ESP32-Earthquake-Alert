@@ -8,6 +8,7 @@
 #include "DisplayManager.h"
 #include "EWS_Decoder.h"
 #include "QZSS_Parser.h"
+#include "AlertManager.h"
 
 // ハードウェアピン
 #define AUDIO_IN_PIN 4
@@ -114,6 +115,7 @@ void taskCore0(void *pvParameters) {
         if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
             qzssParser.resetAlert();
             ewsDecoder.resetState();
+            alertManager.clear();
             ledBlinkCount = 0;
             digitalWrite(ALERT_LED, LOW);
         }
@@ -125,6 +127,7 @@ void taskCore0(void *pvParameters) {
             int rssi = ewsDecoder.getRssi();
             int vol = settings.volume;
             
+            alertManager.update(now);
             qzssParser.updateTimeouts(now);
             ewsDecoder.updateTimeouts(now);
             
@@ -132,10 +135,9 @@ void taskCore0(void *pvParameters) {
             EwsState eState = ewsDecoder.getState();
             int eAlertState = ewsDecoder.getEwsAlertState();
 
-            // 新しいアラートの検知 (QZSSがONになった瞬間、またはEWSの受信開始時、またはEWSの警報確定時)
-            bool newAlert = (qState > 0 && lastQzssState == 0) || 
-                            (eState == DECODE_FRAME && lastEwsState == SEARCH_SYNC) ||
-                            (eAlertState > 0 && lastEwsAlertState == 0);
+            // 新しいアラートの検知
+            bool newAlert = alertManager.checkAndClearNewAlert() || 
+                            (eState == DECODE_FRAME && lastEwsState == SEARCH_SYNC);
             if (newAlert) {
                 ledBlinkCount = 10; // 5回点滅
                 nextLedToggleTime = millis();
@@ -144,7 +146,7 @@ void taskCore0(void *pvParameters) {
             bool changed = (freq != lastFreq) || (abs(rssi - lastRssi) > 2) || 
                            (svCount != lastSvCount) || (vol != lastVol) ||
                            (strcmp(timeStr, lastTimeStr) != 0) || (eState != lastState) || 
-                           (qState != lastQzssState) || (eAlertState != lastEwsAlertState);
+                           alertManager.checkAndClearChangedFlag();
 
             if (changed) {
                 lastFreq = freq; lastRssi = rssi; lastSvCount = svCount;
@@ -152,7 +154,7 @@ void taskCore0(void *pvParameters) {
                 lastEwsState = eState; lastEwsAlertState = eAlertState;
                 strcpy(lastTimeStr, timeStr);
                 
-                displayManager.update(freq, rssi, vol, svCount, timeStr, eState, qState, qzssParser.getAlertText(), eAlertState, ewsDecoder.getEwsAlertText());
+                displayManager.update(freq, rssi, vol, svCount, timeStr, eState);
             }
         }
 

@@ -15,7 +15,7 @@ public:
 class DisplayManager {
 public:
     void init();
-    void update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState, int qzssState, const char* qzssText = nullptr, int ewsAlertState = 0, const char* ewsAlertText = nullptr);
+    void update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState);
     
 private:
     LGFX tft;

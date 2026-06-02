@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include "AlertManager.h"
 
 LGFX::LGFX(void) {
     {
@@ -51,7 +52,7 @@ void DisplayManager::init() {
     canvas->setTextSize(1);
 }
 
-void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState, int qzssState, const char* qzssText, int ewsAlertState, const char* ewsAlertText) {
+void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState) {
     canvas->fillScreen(TFT_BLACK);
 
     // 1行目
@@ -69,25 +70,32 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
 
     canvas->drawFastHLine(0, 20, 284, TFT_DARKGREY);
 
-    bool alertActive = (qzssState == 2 || qzssState == 3 || ewsAlertState == 1);
-    bool testActive = (qzssState == 1);
+    bool alertActive = alertManager.hasRealAlert();
+    bool testActive = alertManager.hasTestAlert();
 
     if (alertActive || testActive) {
       uint16_t bgColor = testActive ? TFT_MAGENTA : TFT_RED;
       canvas->fillRect(0, 20, 284, 56, bgColor);
-      canvas->setCursor(5, 24);
       canvas->setTextColor(TFT_WHITE);
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
-      canvas->setTextWrap(true);
       
-      const char* alertMsg = nullptr;
-      if (qzssState > 0) {
-          alertMsg = qzssText ? qzssText : (testActive ? "QZSS 訓練/試験メッセージを受信中" : "QZSS 災害情報を受信しました！");
-      } else {
-          alertMsg = ewsAlertText ? ewsAlertText : "FM 警報を受信しました！";
+      Alert activeAlerts[4];
+      int count = alertManager.copyAlerts(activeAlerts, 4);
+      
+      if (count == 1) {
+          canvas->setCursor(5, 24);
+          canvas->setTextWrap(true);
+          canvas->print(activeAlerts[0].text);
+      } else if (count > 1) {
+          canvas->setTextWrap(false);
+          int y = 22;
+          for (int i = 0; i < count && y < 76 - 12; i++) {
+              canvas->setCursor(5, y);
+              canvas->print(activeAlerts[i].text);
+              y += 13;
+          }
       }
-      canvas->print(alertMsg);
     } else {
       // 2行目: RSSIと音量
       canvas->setCursor(5, 25);
