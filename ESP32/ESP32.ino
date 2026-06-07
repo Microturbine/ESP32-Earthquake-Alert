@@ -9,6 +9,7 @@
 #include "EWS_Decoder.h"
 #include "QZSS_Parser.h"
 #include "AlertManager.h"
+#include "WebUIManager.h"
 
 // ハードウェアピン
 #define AUDIO_IN_PIN 4
@@ -48,10 +49,23 @@ void processCommand(char* cmd) {
         Serial.println("v[数字]           : 音量を設定します (例: v5 で音量5に設定 [0-15])");
         Serial.println("area [コード]     : アラート対象とする地域コードを設定します (例: area 13)");
         Serial.println("                    ※都道府県コード等 (例: 13=東京, 27=大阪, 0=全域受信)");
+        Serial.println("wifi [SSID] [PASS]: WiFi SSIDとパスワードを設定します (例: wifi MySSID MyPass)");
         Serial.println("[数字]            : FMラジオの周波数を設定します (例: 85.2 で 85.2MHz)");
         Serial.println("test [43/44] [16進] : 指定した16進データでみちびきデコードをテストします");
         Serial.println("                    (例: test 44 533B0604DE195524CDA30305...)");
         Serial.println("--------------------\n");
+    } else if (strncmp(cmd, "wifi ", 5) == 0) {
+        char* ssid = &cmd[5];
+        char* space = strchr(ssid, ' ');
+        String pass = "";
+        if (space != NULL) {
+            *space = '\0';
+            pass = String(space + 1);
+        }
+        settings.setWiFi(String(ssid), pass);
+        Serial.printf("WiFi設定保存: SSID: %s, Pass: %s (再起動します...)\n", ssid, pass.c_str());
+        delay(500);
+        ESP.restart();
     } else if (strncmp(cmd, "area ", 5) == 0) {
         uint32_t code = strtoul(&cmd[5], NULL, 10);
         settings.setRegion(code);
@@ -219,6 +233,7 @@ void taskCore0(void *pvParameters) {
             qzssParser.parseUbx(c);
         }
 
+        webUIManager.handleClient();
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
@@ -238,6 +253,7 @@ void setup() {
     pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
     
     displayManager.init();
+    webUIManager.init();
     ewsDecoder.init(I2C_SDA, I2C_SCL, AUDIO_IN_PIN);
     ewsDecoder.setFrequency(settings.defaultFreq);
     ewsDecoder.setVolume(settings.volume);

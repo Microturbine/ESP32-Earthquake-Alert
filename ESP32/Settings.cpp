@@ -6,6 +6,8 @@ Settings::Settings() {
     defaultFreq = 8520;
     volume = 1;
     myRegionCode = 0; // 0はフィルタなし（全地域対象）
+    wifiSSID = "";
+    wifiPassword = "";
 }
 
 void Settings::load() {
@@ -13,6 +15,8 @@ void Settings::load() {
     defaultFreq = prefs.getInt("freq", 8520);
     volume = prefs.getInt("vol", 1);
     myRegionCode = prefs.getUInt("region", 0);
+    wifiSSID = prefs.getString("wifi_ssid", "");
+    wifiPassword = prefs.getString("wifi_pass", "");
     prefs.end();
 }
 
@@ -21,6 +25,8 @@ void Settings::save() {
     prefs.putInt("freq", defaultFreq);
     prefs.putInt("vol", volume);
     prefs.putUInt("region", myRegionCode);
+    prefs.putString("wifi_ssid", wifiSSID);
+    prefs.putString("wifi_pass", wifiPassword);
     prefs.end();
 }
 
@@ -36,5 +42,11 @@ void Settings::setVolume(int vol) {
 
 void Settings::setRegion(uint32_t region) {
     myRegionCode = region;
+    save();
+}
+
+void Settings::setWiFi(const String& ssid, const String& pass) {
+    wifiSSID = ssid;
+    wifiPassword = pass;
     save();
 }

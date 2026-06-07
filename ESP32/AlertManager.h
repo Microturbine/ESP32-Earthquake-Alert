@@ -6,7 +6,7 @@
 #include <freertos/semphr.h>
 
 struct Alert {
-    char text[128];
+    char text[256];
     uint32_t expiry;
     bool isTest;
 };

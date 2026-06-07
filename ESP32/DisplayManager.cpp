@@ -1,5 +1,6 @@
 #include "DisplayManager.h"
 #include "AlertManager.h"
+#include "WebUIManager.h"
 
 LGFX::LGFX(void) {
     {
@@ -108,11 +109,15 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
       canvas->setCursor(230, 25);
       canvas->printf("V:%d", vol);
 
-      // 3行目: GPS
+      // 3行目: GPS & IP
       canvas->setCursor(5, 42);
       canvas->setTextColor(TFT_CYAN);
       canvas->setTextSize(1);
       canvas->printf("SATS:%d  TIME:%s", svCount, timeStr);
+      
+      canvas->setCursor(160, 42);
+      canvas->setTextColor(TFT_GREEN);
+      canvas->printf("IP:%s", webUIManager.getIPAddress().c_str());
       
       // 4行目: ステータス
       canvas->fillRect(0, 58, 284, 18, (ewsState == 1) ? TFT_RED : 0x2104);

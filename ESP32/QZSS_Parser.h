@@ -26,7 +26,7 @@ private:
 
     int qzssState;
     uint32_t qzssTimeout;
-    char alertText[128];
+    char alertText[256];
 
     void processRxmSfrbx();
     uint32_t getUbxBits(const uint8_t* data, int offset, int length);
