@@ -783,41 +783,54 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 // 警報表示の更新
                 const alertsContainer = document.getElementById('alerts-container');
                 if (data.alerts && data.alerts.length > 0) {
-                    let html = '';
-                    data.alerts.forEach(alert => {
-                        const isTest = alert.isTest;
-                        const cardClass = isTest ? 'alert-card test-alert' : 'alert-card';
-                        const badgeText = isTest ? '訓練/試験' : '災害警報';
-                        
-                        // 残り時間計算
-                        let expiryText = "";
-                        if (alert.remaining > 0) {
-                            expiryText = `有効期限: 約${alert.remaining}秒`;
-                        } else if (alert.remaining === 0) {
-                            expiryText = "期限切れ間近";
-                        }
-
-                        html += `
-                            <div class="${cardClass}">
-                                <div class="alert-header">
-                                    <span class="alert-type-badge">${badgeText}</span>
-                                    <span class="alert-expiry">${expiryText}</span>
+                    const currentAlertsSignature = data.alerts.map(a => a.text + "|" + a.isTest).join("||");
+                    if (alertsContainer.getAttribute('data-signature') !== currentAlertsSignature) {
+                        alertsContainer.setAttribute('data-signature', currentAlertsSignature);
+                        let html = '';
+                        data.alerts.forEach((alert, idx) => {
+                            const isTest = alert.isTest;
+                            const cardClass = isTest ? 'alert-card test-alert' : 'alert-card';
+                            const badgeText = isTest ? '訓練/試験' : '災害警報';
+                            
+                            html += `
+                                <div class="${cardClass}" id="alert-card-${idx}">
+                                    <div class="alert-header">
+                                        <span class="alert-type-badge">${badgeText}</span>
+                                        <span class="alert-expiry" id="alert-expiry-${idx}"></span>
+                                    </div>
+                                    <div class="alert-body">${alert.text}</div>
                                 </div>
-                                <div class="alert-body">${alert.text}</div>
+                            `;
+                        });
+                        alertsContainer.innerHTML = html;
+                    }
+                    
+                    // 有効期限の数値のみをインプレースで更新（アニメーションの再発火を防止）
+                    data.alerts.forEach((alert, idx) => {
+                        const expiryEl = document.getElementById(`alert-expiry-${idx}`);
+                        if (expiryEl) {
+                            let expiryText = "";
+                            if (alert.remaining > 0) {
+                                expiryText = `有効期限: 約${alert.remaining}秒`;
+                            } else if (alert.remaining === 0) {
+                                expiryText = "期限切れ間近";
+                            }
+                            expiryEl.innerText = expiryText;
+                        }
+                    });
+                } else {
+                    if (alertsContainer.getAttribute('data-signature') !== "standby") {
+                        alertsContainer.setAttribute('data-signature', "standby");
+                        alertsContainer.innerHTML = `
+                            <div class="standby-state">
+                                <div class="radar-wave">
+                                    <svg class="radar-icon" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-2a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-12a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>
+                                </div>
+                                <h3>システム監視中 - 待機状態</h3>
+                                <p>現在、検知された災害警報はありません。</p>
                             </div>
                         `;
-                    });
-                    alertsContainer.innerHTML = html;
-                } else {
-                    alertsContainer.innerHTML = `
-                        <div class="standby-state">
-                            <div class="radar-wave">
-                                <svg class="radar-icon" viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zm0-2a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm0-12a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4 2 2 0 0 1 0-4z"/></svg>
-                            </div>
-                            <h3>システム監視中 - 待機状態</h3>
-                            <p>現在、検知された災害警報はありません。</p>
-                        </div>
-                    `;
+                    }
                 }
 
             } catch (err) {
