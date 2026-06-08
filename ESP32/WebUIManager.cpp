@@ -1,5 +1,6 @@
 #include "WebUIManager.h"
 #include "WebUI_HTML.h"
+#include "WebUI_Favicon.h"
 #include "Settings.h"
 #include "AlertManager.h"
 #include "QZSS_Parser.h"
@@ -82,6 +83,7 @@ bool WebUIManager::isAPMode() const {
 
 void WebUIManager::setupRoutes() {
     server.on("/", HTTP_GET, std::bind(&WebUIManager::handleRoot, this));
+    server.on("/favicon.ico", HTTP_GET, std::bind(&WebUIManager::handleFavicon, this));
     server.on("/api/status", HTTP_GET, std::bind(&WebUIManager::handleGetStatus, this));
     server.on("/api/settings", HTTP_POST, std::bind(&WebUIManager::handlePostSettings, this));
     server.on("/api/test", HTTP_POST, std::bind(&WebUIManager::handlePostTest, this));
@@ -242,3 +244,9 @@ void WebUIManager::handlePostClear() {
     alertManager.clear();
     server.send(200, "text/plain", "OK");
 }
+
+void WebUIManager::handleFavicon() {
+    server.sendHeader("Cache-Control", "public, max-age=2592000"); // 30 days cache
+    server.send_P(200, "image/x-icon", (const char*)FAVICON_ICO, FAVICON_ICO_LEN);
+}
+

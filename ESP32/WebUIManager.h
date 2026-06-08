@@ -21,6 +21,7 @@ private:
 
     void setupRoutes();
     void handleRoot();
+    void handleFavicon();
     void handleGetStatus();
     void handlePostSettings();
     void handlePostTest();

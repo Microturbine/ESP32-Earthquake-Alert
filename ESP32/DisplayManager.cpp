@@ -75,14 +75,28 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     bool testActive = alertManager.hasTestAlert();
 
     if (alertActive || testActive) {
+      Alert activeAlerts[4];
+      int count = alertManager.copyAlerts(activeAlerts, 4);
+      
+      bool allCancelled = (count > 0);
+      for (int i = 0; i < count; i++) {
+          if (strstr(activeAlerts[i].text, "解除") == nullptr && 
+              strstr(activeAlerts[i].text, "取消") == nullptr && 
+              strstr(activeAlerts[i].text, "終了") == nullptr) {
+              allCancelled = false;
+              break;
+          }
+      }
+
       uint16_t bgColor = testActive ? TFT_MAGENTA : TFT_RED;
+      if (allCancelled) {
+          bgColor = 0x03E0; // TFT_DARKGREEN
+      }
+      
       canvas->fillRect(0, 20, 284, 56, bgColor);
       canvas->setTextColor(TFT_WHITE);
       canvas->setFont(&fonts::lgfxJapanGothic_12);
       canvas->setTextSize(1);
-      
-      Alert activeAlerts[4];
-      int count = alertManager.copyAlerts(activeAlerts, 4);
       
       if (count == 1) {
           canvas->setCursor(5, 24);

@@ -18,7 +18,7 @@ int QzssParser::getQzssState() { return qzssState; }
 const char* QzssParser::getAlertText() { return alertText; }
 
 void QzssParser::updateTimeouts(uint32_t now) {
-    if (qzssState > 0 && now > qzssTimeout) {
+    if (qzssState > 0 && qzssTimeout > 0 && now > qzssTimeout) {
         qzssState = 0;
         alertText[0] = '\0';
     }
@@ -145,14 +145,29 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
     
     if (reportClass >= 1 && reportClass <= 3) {
         qzssState = 2;
-        qzssTimeout = millis() + 30000;
         
         uint32_t it = getUbxBits(l1s_msg, 41, 2);
         if (it == 2) {
+            qzssTimeout = millis() + 60000;
+            if (disasterCat == 1 || disasterCat == 2 || disasterCat == 3) {
+                alertManager.removeAlertsStartWith("緊急地震");
+                alertManager.removeAlertsStartWith("震源");
+                alertManager.removeAlertsStartWith("震度速報");
+            } else if (disasterCat == 5) {
+                alertManager.removeAlertsStartWith("津波警報");
+                alertManager.removeAlertsStartWith("大津波警報");
+            } else if (disasterCat == 8) {
+                alertManager.removeAlertsStartWith("火山警報");
+            } else if (disasterCat == 10) {
+                alertManager.removeAlertsStartWith("気象");
+            } else if (disasterCat == 11) {
+                alertManager.removeAlertsStartWith("洪水");
+            }
             snprintf(alertText, sizeof(alertText), "災害警報(DC:%d) 取消/解除", disasterCat);
-            alertManager.addAlert(alertText, 30000, false);
+            alertManager.addAlert(alertText, 60000, false);
             return;
         }
+        qzssTimeout = millis() + 60000; // 次のデータを受け取るたびに延長（60秒タイムアウト）
 
         switch (disasterCat) {
         case 1: { // 緊急地震速報 (EEW)
@@ -169,19 +184,19 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         case 2: { // 震源
             uint32_t mag = getUbxBits(l1s_msg, 106, 7); // Ma
             uint32_t epi = getUbxBits(l1s_msg, 113, 10); // Ep
-            uint32_t depth = getUbxBits(l1s_msg, 97, 9); // De
+            uint32_t depth = getUbxBits(l1s_msg, 54, 9); // De
             
             uint32_t latNs = getUbxBits(l1s_msg, 123, 1);
             uint32_t latD = getUbxBits(l1s_msg, 124, 7);
             uint32_t latM = getUbxBits(l1s_msg, 131, 6);
-            uint32_t lonEw = getUbxBits(l1s_msg, 143, 1);
-            uint32_t lonD = getUbxBits(l1s_msg, 144, 8);
-            uint32_t lonM = getUbxBits(l1s_msg, 152, 6);
+            uint32_t lonEw = getUbxBits(l1s_msg, 137, 1);
+            uint32_t lonD = getUbxBits(l1s_msg, 138, 8);
+            uint32_t lonM = getUbxBits(l1s_msg, 146, 6);
 
             const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
             if (!epiName) epiName = "不明";
 
-            snprintf(alertText, sizeof(alertText), "震源(%s/M%.1f/深さ%dkm/%s%d度%d分)", 
+            snprintf(alertText, sizeof(alertText), "震源(%s/M%.1f/深さ%dkm/%s%d度%d分/%s%d度%d分)", 
                      epiName, mag/10.0, depth == 511 ? 0 : depth, latNs ? "S" : "N", latD, latM, lonEw ? "W" : "E", lonD, lonM);
             break;
         }
@@ -224,11 +239,19 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
             if (!regName) regName = "一部沿岸";
 
+            if (code == 2) {
+                alertManager.removeAlertsStartWith("津波警報");
+                alertManager.removeAlertsStartWith("大津波警報");
+                snprintf(alertText, sizeof(alertText), "津波警報 解除(%s等)", regName);
+                alertManager.addAlert(alertText, 60000, false);
+                qzssTimeout = millis() + 60000;
+                return;
+            }
+
             const char* warnName = "注意報/警報";
             if (code == 3) warnName = "津波警報";
             else if (code == 4) warnName = "大津波警報";
             else if (code == 5) warnName = "大津波警報発表";
-            else if (code == 2) warnName = "解除";
 
             snprintf(alertText, sizeof(alertText), "%s(%s等)", warnName, regName);
             break;
@@ -281,14 +304,19 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             uint32_t lv = getUbxBits(l1s_msg, 93, 4); // Lv_1
             uint64_t riverCode = getUbxBits64(l1s_msg, 53, 40); // Pl_1
             
-            // Serial.printf("[Debug MT43 Flood] lv:%d, riverCode:%llu (0x%llX)\n", lv, riverCode, riverCode);
-
             const char* riverName = getQzssRiverName(riverCode, RIVER_CODE_TABLE, sizeof(RIVER_CODE_TABLE)/sizeof(QzssRiverCodeMap));
             if (!riverName) riverName = "指定河川";
 
+            if (lv == 1) {
+                alertManager.removeAlertsStartWith("洪水予報");
+                snprintf(alertText, sizeof(alertText), "洪水予報 解除:%s", riverName);
+                alertManager.addAlert(alertText, 60000, false);
+                qzssTimeout = millis() + 60000;
+                return;
+            }
+
             const char* warnLevelStr = "警戒情報";
-            if (lv == 1) warnLevelStr = "解除";
-            else if (lv == 2) warnLevelStr = "氾濫警戒";
+            if (lv == 2) warnLevelStr = "氾濫警戒";
             else if (lv == 3) warnLevelStr = "氾濫危険";
             else if (lv == 4) warnLevelStr = "氾濫発生";
 
@@ -305,17 +333,17 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             uint32_t dw = getUbxBits(l1s_msg, 54, 5); // Dw_1
             uint32_t pl = getUbxBits(l1s_msg, 59, 14); // Pl_1
             const char* dwName = getQzssName(dw, MARINE_WARNING_TABLE, sizeof(MARINE_WARNING_TABLE)/sizeof(QzssCodeMap));
-            if (!dwName) dwName = "警報";
+            if (!dwName) dwName = "海上警報";
             const char* plName = getQzssName(pl, MARINE_FORECAST_TABLE, sizeof(MARINE_FORECAST_TABLE)/sizeof(QzssCodeMap));
             if (!plName) plName = "海域";
-            snprintf(alertText, sizeof(alertText), "海上%s(%s)", dwName, plName);
+            snprintf(alertText, sizeof(alertText), "%s(%s)", dwName, plName);
             break;
         }
         default:
             snprintf(alertText, sizeof(alertText), "QZSS 災害情報 (種別:%d)", disasterCat);
             break;
         }
-        alertManager.addAlert(alertText, 30000, false);
+        alertManager.addAlert(alertText, 60000, false);
     }
 }
 
@@ -339,7 +367,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             alertManager.addAlert(alertText, 15000, true);
         } else if (msgType == 1 || msgType == 2) {
             qzssState = 3; 
-            qzssTimeout = millis() + 30000;
+            qzssTimeout = millis() + 60000; // 60秒タイムアウト（次の受信で自動延長）
             
             // 1. 災害種別の日本語化
             const char* hazardName = getQzssName(hazardCat, DCX_HAZARD_TABLE, sizeof(DCX_HAZARD_TABLE)/sizeof(QzssCodeMap));
@@ -434,12 +462,14 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
             snprintf(alertText, sizeof(alertText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
             Serial.printf("\n[MT44] %s: %s, 対象:%s, 指示:%s\n", typeStr, hazardName, areaStr, guidanceStr);
-            alertManager.addAlert(alertText, 30000, false);
+            alertManager.addAlert(alertText, 60000, false);
         } else if (msgType == 3) {
             qzssState = 1;
-            qzssTimeout = millis() + 15000;
-            snprintf(alertText, sizeof(alertText), "DCX 警報解除");
-            alertManager.addAlert(alertText, 15000, false);
+            qzssTimeout = millis() + 60000;
+            alertManager.removeAlertsStartWith("Jアラート");
+            alertManager.removeAlertsStartWith("Lアラート");
+            snprintf(alertText, sizeof(alertText), "Jアラート/Lアラート 警報解除");
+            alertManager.addAlert(alertText, 60000, false);
         }
     }
 }

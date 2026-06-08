@@ -10,6 +10,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>災害警報レシーバー ダッシュボード</title>
+    <link rel="shortcut icon" href="/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
@@ -178,6 +180,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             box-shadow: 0 4px 20px var(--warning-glow);
         }
 
+        .alert-card.cancel-alert {
+            border-color: var(--success);
+            background: rgba(16, 185, 129, 0.06);
+            box-shadow: 0 4px 20px var(--success-glow);
+        }
+
         .alert-card::before {
             content: '';
             position: absolute;
@@ -190,6 +198,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
         .alert-card.test-alert::before {
             background: var(--warning);
+        }
+
+        .alert-card.cancel-alert::before {
+            background: var(--success);
         }
 
         .alert-header {
@@ -212,6 +224,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
         .alert-card.test-alert .alert-type-badge {
             background: var(--warning);
+        }
+
+        .alert-card.cancel-alert .alert-type-badge {
+            background: var(--success);
         }
 
         .alert-expiry {
@@ -789,8 +805,17 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         let html = '';
                         data.alerts.forEach((alert, idx) => {
                             const isTest = alert.isTest;
-                            const cardClass = isTest ? 'alert-card test-alert' : 'alert-card';
-                            const badgeText = isTest ? '訓練/試験' : '災害警報';
+                            const isCancel = alert.text.includes("解除") || alert.text.includes("取消") || alert.text.includes("終了");
+                            let cardClass = 'alert-card';
+                            let badgeText = '災害警報';
+                            
+                            if (isCancel) {
+                                cardClass = 'alert-card cancel-alert';
+                                badgeText = '解除/情報';
+                            } else if (isTest) {
+                                cardClass = 'alert-card test-alert';
+                                badgeText = '訓練/試験';
+                            }
                             
                             html += `
                                 <div class="${cardClass}" id="alert-card-${idx}">

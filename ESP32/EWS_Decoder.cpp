@@ -273,13 +273,14 @@ void EwsDecoder::processAudio() {
 
             if (!isEndSignal) {
                 ewsAlertState = 1;
-                ewsAlertTimeout = millis() + 30000;
+                ewsAlertTimeout = millis() + 900000; // 15分後にタイムアウトするように設定
                 const char* typeName = (currentSyncType == SYNC_TYPE_II) ? "津波警報" : "第一種警報";
                 snprintf(ewsAlertText, sizeof(ewsAlertText), "FM %s:%s", typeName, getRegionName(areaData));
-                alertManager.addAlert(ewsAlertText, 30000, false);
+                alertManager.addAlert(ewsAlertText, 900000, false);
             } else {
                 resetAlert();
                 alertManager.removeAlertsStartWith("FM ");
+                alertManager.addAlert("FM 災害警報 放送終了", 60000, false);
             }
 
             if (!isEndSignal || bitIndex >= 192) {

@@ -102,7 +102,7 @@ void AlertManager::update(uint32_t now) {
     if (xSemaphoreTake(mutex, portMAX_DELAY)) {
         int writeIdx = 0;
         for (int i = 0; i < alertCount; i++) {
-            if (now < alerts[i].expiry) {
+            if (alerts[i].expiry == 0 || now < alerts[i].expiry) {
                 alerts[writeIdx++] = alerts[i];
             } else {
                 changedFlag = true;
