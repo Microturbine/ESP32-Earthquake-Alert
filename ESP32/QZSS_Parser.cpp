@@ -169,6 +169,10 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         }
         qzssTimeout = millis() + 60000; // 次のデータを受け取るたびに延長（60秒タイムアウト）
 
+        double latitude = 0.0;
+        double longitude = 0.0;
+        int code = 0;
+
         switch (disasterCat) {
         case 1: { // 緊急地震速報 (EEW)
             uint32_t mag = getUbxBits(l1s_msg, 105, 7); // Ma
@@ -179,6 +183,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             if (!epiName) epiName = "不明";
             
             snprintf(alertText, sizeof(alertText), "緊急地震(%s/M%.1f/震度%s)", epiName, mag/10.0, getIntensityName(intLower));
+            code = epi;
             break;
         }
         case 2: { // 震源
@@ -198,6 +203,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
 
             snprintf(alertText, sizeof(alertText), "震源(%s/M%.1f/深さ%dkm/%s%d度%d分/%s%d度%d分)", 
                      epiName, mag/10.0, depth == 511 ? 0 : depth, latNs ? "S" : "N", latD, latM, lonEw ? "W" : "E", lonD, lonM);
+            
+            latitude = latD + latM / 60.0;
+            if (latNs) latitude = -latitude;
+            longitude = lonD + lonM / 60.0;
+            if (lonEw) longitude = -longitude;
+            code = epi;
             break;
         }
         case 3: { // 震度
@@ -215,6 +226,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 const char* plName = getQzssName(maxPl, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
                 if (!plName) plName = "各地";
                 snprintf(alertText, sizeof(alertText), "震度速報(最大震度%s / %s等)", getIntensityName(maxInt), plName);
+                code = maxPl;
             } else {
                 snprintf(alertText, sizeof(alertText), "各地の震度情報");
             }
@@ -231,15 +243,16 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             else if (is == 6) infoName = "調査終了";
             
             snprintf(alertText, sizeof(alertText), "南海トラフ情報(%s)", infoName);
+            code = is;
             break;
         }
         case 5: { // 津波警報
-            uint32_t code = getUbxBits(l1s_msg, 80, 4); // Dw
+            uint32_t codeVal = getUbxBits(l1s_msg, 80, 4); // Dw
             uint32_t reg = getUbxBits(l1s_msg, 100, 10); // Pl_1
             const char* regName = getQzssName(reg, TSUNAMI_REGION_TABLE, sizeof(TSUNAMI_REGION_TABLE)/sizeof(QzssCodeMap));
             if (!regName) regName = "一部沿岸";
 
-            if (code == 2) {
+            if (codeVal == 2) {
                 alertManager.removeAlertsStartWith("津波警報");
                 alertManager.removeAlertsStartWith("大津波警報");
                 snprintf(alertText, sizeof(alertText), "津波警報 解除(%s等)", regName);
@@ -249,11 +262,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             }
 
             const char* warnName = "注意報/警報";
-            if (code == 3) warnName = "津波警報";
-            else if (code == 4) warnName = "大津波警報";
-            else if (code == 5) warnName = "大津波警報発表";
+            if (codeVal == 3) warnName = "津波警報";
+            else if (codeVal == 4) warnName = "大津波警報";
+            else if (codeVal == 5) warnName = "大津波警報発表";
 
             snprintf(alertText, sizeof(alertText), "%s(%s等)", warnName, regName);
+            code = reg;
             break;
         }
         case 6: { // 北西太平洋津波
@@ -262,6 +276,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* regName = getQzssName(reg, COASTAL_REGION_TABLE, sizeof(COASTAL_REGION_TABLE)/sizeof(QzssCodeMap));
             if (!regName) regName = "沿岸";
             snprintf(alertText, sizeof(alertText), "北西太平洋津波(%s/Tp:%d)", regName, tp);
+            code = reg;
             break;
         }
         case 8: { // 火山
@@ -280,6 +295,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             else if (dw == 62) levelStr = "噴火確認";
 
             snprintf(alertText, sizeof(alertText), "火山警報(%s/%s)", voName, levelStr);
+            code = vo;
             break;
         }
         case 9: { // 降灰
@@ -287,6 +303,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* voName = getQzssName(vo, VOLCANO_TABLE, sizeof(VOLCANO_TABLE)/sizeof(QzssCodeMap));
             if (!voName) voName = "火山";
             snprintf(alertText, sizeof(alertText), "降灰予報(%s)", voName);
+            code = vo;
             break;
         }
         case 10: { // 気象
@@ -298,6 +315,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             if (!plName) plName = "一部地域";
             
             snprintf(alertText, sizeof(alertText), "%s(%s)", wwName, plName);
+            code = pl;
             break;
         }
         case 11: { // 洪水
@@ -321,12 +339,14 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             else if (lv == 4) warnLevelStr = "氾濫発生";
 
             snprintf(alertText, sizeof(alertText), "洪水予報:%s(%s)", riverName, warnLevelStr);
+            code = lv;
             break;
         }
         case 12: { // 台風
             uint32_t tn = getUbxBits(l1s_msg, 88, 7); // Tn (台風番号)
             uint32_t pr = getUbxBits(l1s_msg, 144, 11); // Pr (気圧)
             snprintf(alertText, sizeof(alertText), "台風第%d号情報(中心気圧:%dhPa)", tn, pr);
+            code = tn;
             break;
         }
         case 14: { // 海上
@@ -337,13 +357,14 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* plName = getQzssName(pl, MARINE_FORECAST_TABLE, sizeof(MARINE_FORECAST_TABLE)/sizeof(QzssCodeMap));
             if (!plName) plName = "海域";
             snprintf(alertText, sizeof(alertText), "%s(%s)", dwName, plName);
+            code = pl;
             break;
         }
         default:
             snprintf(alertText, sizeof(alertText), "QZSS 災害情報 (種別:%d)", disasterCat);
             break;
         }
-        alertManager.addAlert(alertText, 60000, false);
+        alertManager.addAlert(alertText, 60000, false, latitude, longitude, disasterCat, code);
     }
 }
 
@@ -369,6 +390,8 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             qzssState = 3; 
             qzssTimeout = millis() + 60000; // 60秒タイムアウト（次の受信で自動延長）
             
+            uint64_t prefMask = 0;
+
             // 1. 災害種別の日本語化
             const char* hazardName = getQzssName(hazardCat, DCX_HAZARD_TABLE, sizeof(DCX_HAZARD_TABLE)/sizeof(QzssCodeMap));
             if (!hazardName) hazardName = "災害情報";
@@ -407,6 +430,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 uint32_t ex8 = getUbxBits(l1s_msg, 147, 1);
                 uint64_t ex9 = getUbxBits64(l1s_msg, 148, 64);
                 if (ex8 == 0) { // 都道府県コード
+                    prefMask = ex9;
                     int count = 0;
                     areaStr[0] = '\0';
                     for (int i = 1; i <= 47; i++) {
@@ -432,6 +456,9 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                         uint32_t cityCode = getUbxBits(l1s_msg, 148 + i*16, 16);
                         if (cityCode > 0) {
                             uint32_t prefId = cityCode / 1000;
+                            if (prefId >= 1 && prefId <= 47) {
+                                prefMask |= ((uint64_t)1 << (64 - prefId));
+                            }
                             const char* prefName = getQzssName(prefId, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
                             if (prefName) {
                                 if (count > 0) strncat(areaStr, ",", sizeof(areaStr) - strlen(areaStr) - 1);
@@ -450,6 +477,9 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 uint32_t ex1 = getUbxBits(l1s_msg, 147, 16);
                 if (ex1 > 0) {
                     uint32_t prefId = ex1 / 1000;
+                    if (prefId >= 1 && prefId <= 47) {
+                        prefMask |= ((uint64_t)1 << (64 - prefId));
+                    }
                     const char* prefName = getQzssName(prefId, PREFECTURE_JIS_TABLE, sizeof(PREFECTURE_JIS_TABLE)/sizeof(QzssCodeMap));
                     if (prefName) {
                         snprintf(areaStr, sizeof(areaStr), "%s内", prefName);
@@ -462,7 +492,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
             snprintf(alertText, sizeof(alertText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
             Serial.printf("\n[MT44] %s: %s, 対象:%s, 指示:%s\n", typeStr, hazardName, areaStr, guidanceStr);
-            alertManager.addAlert(alertText, 60000, false);
+            alertManager.addAlert(alertText, 60000, false, 0.0, 0.0, 44, hazardCat, prefMask);
         } else if (msgType == 3) {
             qzssState = 1;
             qzssTimeout = millis() + 60000;

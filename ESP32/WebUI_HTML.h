@@ -552,6 +552,50 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             from { opacity: 0; }
             to { opacity: 1; }
         }
+
+        /* 災害地図スタイル */
+        .map-container {
+            width: 100%;
+            height: 350px;
+            border-radius: 12px;
+            border: 1px solid var(--card-border);
+            overflow: hidden;
+            position: relative;
+            background: rgba(10, 7, 18, 0.4);
+            margin-top: 0.5rem;
+        }
+
+        #offline-map {
+            display: none;
+            width: 100%;
+            height: 100%;
+            background: rgba(10, 7, 18, 0.6);
+        }
+
+        #leaflet-map {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Leaflet 暗色テーマカスタマイズ */
+        .leaflet-container {
+            background-color: var(--bg-secondary) !important;
+            font-family: inherit;
+        }
+
+        .leaflet-popup-content-wrapper {
+            background: var(--bg-secondary) !important;
+            color: var(--text-primary) !important;
+            border: 1px solid var(--card-border) !important;
+            backdrop-filter: blur(12px);
+            border-radius: 8px;
+        }
+
+        .leaflet-popup-tip {
+            background: var(--bg-secondary) !important;
+            border: 1px solid var(--card-border) !important;
+        }
     </style>
 </head>
 <body>
@@ -588,6 +632,49 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                             <h3>システム監視中 - 待機状態</h3>
                             <p>現在、検知された災害警報はありません。</p>
                         </div>
+                    </div>
+                </div>
+
+                <!-- 災害地図モニター -->
+                <div class="card">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+                        災害地図モニター
+                    </div>
+                    <div class="map-container">
+                        <div id="leaflet-map"></div>
+                        <svg id="offline-map" viewBox="122 0 25 22">
+                            <!-- Grid Lines -->
+                            <line x1="125" y1="0" x2="125" y2="22" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="130" y1="0" x2="130" y2="22" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="135" y1="0" x2="135" y2="22" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="140" y1="0" x2="140" y2="22" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="145" y1="0" x2="145" y2="22" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            
+                            <line x1="122" y1="2.5" x2="147" y2="2.5" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="5" x2="147" y2="5" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="7.5" x2="147" y2="7.5" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="10" x2="147" y2="10" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="12.5" x2="147" y2="12.5" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="15" x2="147" y2="15" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="17.5" x2="147" y2="17.5" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+                            <line x1="122" y1="20" x2="147" y2="20" stroke="rgba(255,255,255,0.03)" stroke-width="0.05" />
+
+                            <!-- Japan Outline Path -->
+                            <!-- Hokkaido -->
+                            <path d="M 141.7 0.6 L 145.8 2.7 L 143.2 4.0 L 140.7 4.2 L 140.1 4.6 L 140.4 2.7 Z" fill="rgba(139, 92, 246, 0.08)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="0.1" />
+                            <!-- Honshu -->
+                            <path d="M 141.5 4.5 L 141.1 7.7 L 140.0 10.9 L 138.9 11.4 L 135.8 12.5 L 130.9 12.0 L 132.8 10.5 L 137.4 8.5 L 139.1 8.0 Z" fill="rgba(139, 92, 246, 0.08)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="0.1" />
+                            <!-- Shikoku -->
+                            <path d="M 134.6 11.8 L 134.2 12.7 L 133.0 13.3 L 132.0 12.7 Z" fill="rgba(139, 92, 246, 0.08)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="0.1" />
+                            <!-- Kyushu -->
+                            <path d="M 131.0 12.1 L 131.9 12.7 L 131.5 14.5 L 130.7 15.0 L 130.2 14.8 L 129.7 13.4 L 130.4 12.4 Z" fill="rgba(139, 92, 246, 0.08)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="0.1" />
+                            <!-- Okinawa -->
+                            <path d="M 127.5 19.5 L 128.3 19.0 L 128.1 19.8 L 127.6 20.0 Z" fill="rgba(139, 92, 246, 0.08)" stroke="rgba(139, 92, 246, 0.4)" stroke-width="0.1" />
+
+                            <!-- Dynamic overlays (pulsing red circles/orange dots) -->
+                            <g id="svg-markers"></g>
+                        </svg>
                     </div>
                 </div>
 
@@ -721,6 +808,269 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
     <script>
         let isAPMode = false;
         let lastIp = "";
+
+        let map = null;
+        let leafletLoaded = false;
+        let mapMarkers = [];
+
+        const PREFECTURE_COORDINATES = {
+            1: { name: "北海道", lat: 43.46, lon: 142.82 },
+            2: { name: "青森県", lat: 40.73, lon: 140.83 },
+            3: { name: "岩手県", lat: 39.56, lon: 141.33 },
+            4: { name: "宮城県", lat: 38.38, lon: 140.82 },
+            5: { name: "秋田県", lat: 39.75, lon: 140.40 },
+            6: { name: "山形県", lat: 38.45, lon: 140.12 },
+            7: { name: "福島県", lat: 37.38, lon: 140.28 },
+            8: { name: "茨城県", lat: 36.32, lon: 140.27 },
+            9: { name: "栃木県", lat: 36.65, lon: 140.04 },
+            10: { name: "群馬県", lat: 36.48, lon: 138.93 },
+            11: { name: "埼玉県", lat: 35.98, lon: 139.37 },
+            12: { name: "千葉県", lat: 35.51, lon: 140.23 },
+            13: { name: "東京都", lat: 35.68, lon: 139.40 },
+            14: { name: "神奈川県", lat: 35.43, lon: 139.25 },
+            15: { name: "新潟県", lat: 37.49, lon: 138.90 },
+            16: { name: "富山県", lat: 36.65, lon: 137.29 },
+            17: { name: "石川県", lat: 36.76, lon: 136.85 },
+            18: { name: "福井県", lat: 35.91, lon: 136.19 },
+            19: { name: "山梨県", lat: 35.61, lon: 138.60 },
+            20: { name: "長野県", lat: 36.10, lon: 137.97 },
+            21: { name: "岐阜県", lat: 35.75, lon: 137.04 },
+            22: { name: "静岡県", lat: 34.98, lon: 138.38 },
+            23: { name: "愛知県", lat: 35.00, lon: 136.94 },
+            24: { name: "三重県", lat: 34.42, lon: 136.45 },
+            25: { name: "滋賀県", lat: 35.20, lon: 136.14 },
+            26: { name: "京都府", lat: 35.25, lon: 135.45 },
+            27: { name: "大阪府", lat: 34.60, lon: 135.53 },
+            28: { name: "兵庫県", lat: 35.03, lon: 134.80 },
+            29: { name: "奈良県", lat: 34.28, lon: 135.86 },
+            30: { name: "和歌山県", lat: 33.90, lon: 135.45 },
+            31: { name: "鳥取県", lat: 35.39, lon: 133.85 },
+            32: { name: "島根県", lat: 34.89, lon: 132.63 },
+            33: { name: "岡山県", lat: 34.86, lon: 133.78 },
+            34: { name: "広島県", lat: 34.54, lon: 132.78 },
+            35: { name: "山口県", lat: 34.12, lon: 131.57 },
+            36: { name: "徳島県", lat: 33.91, lon: 134.29 },
+            37: { name: "香川県", lat: 34.26, lon: 133.95 },
+            38: { name: "愛媛県", lat: 33.68, lon: 132.86 },
+            39: { name: "高知県", lat: 33.45, lon: 133.30 },
+            40: { name: "福岡県", lat: 33.60, lon: 130.66 },
+            41: { name: "佐賀県", lat: 33.28, lon: 130.06 },
+            42: { name: "長崎県", lat: 32.88, lon: 129.98 },
+            43: { name: "熊本県", lat: 32.50, lon: 130.80 },
+            44: { name: "大分県", lat: 33.17, lon: 131.42 },
+            45: { name: "宮崎県", lat: 32.17, lon: 131.35 },
+            46: { name: "鹿児島県", lat: 31.32, lon: 130.64 },
+            47: { name: "沖縄県", lat: 26.30, lon: 127.80 }
+        };
+
+        const TSUNAMI_REGION_COORDINATES = {
+            200: { lat: 41.5, lon: 141.8 },
+            210: { lat: 40.2, lon: 142.1 },
+            220: { lat: 38.3, lon: 141.7 },
+            230: { lat: 37.3, lon: 141.2 },
+            240: { lat: 36.3, lon: 140.8 },
+            250: { lat: 35.1, lon: 140.3 },
+            300: { lat: 35.0, lon: 139.5 },
+            310: { lat: 34.5, lon: 138.8 },
+            320: { lat: 34.0, lon: 137.5 }
+        };
+
+        const VOLCANO_COORDINATES = {
+            104: { lat: 42.54, lon: 140.84 },
+            201: { lat: 40.65, lon: 140.35 },
+            301: { lat: 37.64, lon: 139.70 },
+            501: { lat: 35.36, lon: 138.73 },
+            504: { lat: 35.23, lon: 139.02 },
+            506: { lat: 36.40, lon: 138.52 },
+            701: { lat: 34.72, lon: 137.60 },
+            902: { lat: 32.88, lon: 131.10 },
+            905: { lat: 31.59, lon: 130.65 }
+        };
+
+        // Leaflet CDNからリソースをロード
+        function loadMapAssets() {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+            document.head.appendChild(link);
+
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+            script.onload = () => {
+                initMap();
+            };
+            script.onerror = () => {
+                initMapFallback();
+            };
+            document.head.appendChild(script);
+
+            // タイムアウト監視 (3秒)
+            setTimeout(() => {
+                if (typeof L === 'undefined') {
+                    console.warn('Leaflet load timed out. Falling back to offline SVG map.');
+                    initMapFallback();
+                }
+            }, 3000);
+        }
+
+        function initMap() {
+            if (typeof L !== 'undefined') {
+                leafletLoaded = true;
+                document.getElementById('leaflet-map').style.display = 'block';
+                document.getElementById('offline-map').style.display = 'none';
+
+                map = L.map('leaflet-map', {
+                    zoomControl: false,
+                    attributionControl: false
+                }).setView([36.2048, 138.2529], 5);
+
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 10,
+                    minZoom: 3
+                }).addTo(map);
+
+                L.control.zoom({ position: 'bottomright' }).addTo(map);
+            } else {
+                initMapFallback();
+            }
+        }
+
+        function initMapFallback() {
+            leafletLoaded = false;
+            document.getElementById('leaflet-map').style.display = 'none';
+            document.getElementById('offline-map').style.display = 'block';
+        }
+
+        function updateMap(alerts) {
+            if (leafletLoaded && map) {
+                mapMarkers.forEach(m => map.removeLayer(m));
+                mapMarkers = [];
+            }
+            
+            const svgGroup = document.getElementById('svg-markers');
+            if (svgGroup) {
+                svgGroup.innerHTML = '';
+            }
+
+            if (!alerts || alerts.length === 0) return;
+
+            alerts.forEach(alert => {
+                let lat = alert.lat || 0;
+                let lon = alert.lon || 0;
+                let isExact = (lat !== 0 && lon !== 0);
+                
+                let locations = [];
+                let color = '#ef4444';
+
+                if (isExact) {
+                    locations.push({ lat: lat, lon: lon, color: '#ef4444', label: '震源地' });
+                } else {
+                    if (alert.cat === 1) { // EEW
+                        let approx = getApproxEpicenterCoords(alert.code);
+                        if (approx) {
+                            locations.push({ lat: approx.lat, lon: approx.lon, color: '#ef4444', label: '震源(推定)' });
+                        }
+                    } else if (alert.cat === 3 || alert.cat === 10) { // 震度 or 気象
+                        if (alert.code >= 1 && alert.code <= 47) {
+                            const coords = PREFECTURE_COORDINATES[alert.code];
+                            locations.push({ lat: coords.lat, lon: coords.lon, color: '#f59e0b', label: coords.name });
+                        }
+                    } else if (alert.cat === 5 || alert.cat === 6) { // 津波
+                        const coords = TSUNAMI_REGION_COORDINATES[alert.code] || { lat: 36.0, lon: 140.0 };
+                        locations.push({ lat: coords.lat, lon: coords.lon, color: '#06b6d4', label: '津波対象地域' });
+                    } else if (alert.cat === 8 || alert.cat === 9) { // 火山
+                        const coords = VOLCANO_COORDINATES[alert.code] || { lat: 35.36, lon: 138.73 };
+                        locations.push({ lat: coords.lat, lon: coords.lon, color: '#ec4899', label: '火山' });
+                    } else if (alert.cat === 44) { // Jアラート
+                        try {
+                            const mask = BigInt("0x" + alert.prefMask);
+                            for (let i = 1; i <= 47; i++) {
+                                const bit = BigInt(1) << BigInt(64 - i);
+                                if ((mask & bit) !== 0n) {
+                                    const coords = PREFECTURE_COORDINATES[i];
+                                    locations.push({ lat: coords.lat, lon: coords.lon, color: '#f59e0b', label: coords.name });
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Failed to parse prefMask:", e);
+                        }
+                    }
+                }
+
+                locations.forEach(loc => {
+                    if (leafletLoaded && map) {
+                        const markerCircle = L.circle([loc.lat, loc.lon], {
+                            color: loc.color,
+                            fillColor: loc.color,
+                            fillOpacity: 0.35,
+                            radius: alert.cat === 44 ? 30000 : 50000
+                        }).addTo(map);
+                        markerCircle.bindPopup(`<b>${alert.text}</b>`);
+                        mapMarkers.push(markerCircle);
+                    }
+                    
+                    if (svgGroup) {
+                        const x = loc.lon;
+                        const y = 46 - loc.lat;
+                        
+                        if (x >= 122 && x <= 147 && y >= 0 && y <= 22) {
+                            const pulseElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                            pulseElement.setAttribute('cx', x);
+                            pulseElement.setAttribute('cy', y);
+                            pulseElement.setAttribute('r', alert.cat === 5 ? '0.4' : '0.6');
+                            pulseElement.setAttribute('fill', hexToRgba(loc.color, 0.4));
+                            pulseElement.setAttribute('stroke', loc.color);
+                            pulseElement.setAttribute('stroke-width', '0.08');
+                            
+                            const animateR = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+                            animateR.setAttribute('attributeName', 'r');
+                            animateR.setAttribute('values', '0.1;0.8;0.1');
+                            animateR.setAttribute('dur', '2s');
+                            animateR.setAttribute('repeatCount', 'indefinite');
+                            pulseElement.appendChild(animateR);
+                            
+                            svgGroup.appendChild(pulseElement);
+                            
+                            const centerElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                            centerElement.setAttribute('cx', x);
+                            centerElement.setAttribute('cy', y);
+                            centerElement.setAttribute('r', '0.15');
+                            centerElement.setAttribute('fill', loc.color);
+                            svgGroup.appendChild(centerElement);
+                        }
+                    }
+                });
+            });
+        }
+
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+
+        function getApproxEpicenterCoords(code) {
+            if (code === 11) return { lat: 43.5, lon: 142.5 };
+            if (code === 12) return { lat: 39.5, lon: 141.0 };
+            if (code === 13) return { lat: 37.0, lon: 137.5 };
+            if (code === 14) return { lat: 36.0, lon: 139.5 };
+            if (code === 15) return { lat: 27.0, lon: 142.0 };
+            if (code === 16) return { lat: 35.0, lon: 137.5 };
+            if (code === 17) return { lat: 35.0, lon: 135.5 };
+            if (code === 18) return { lat: 35.0, lon: 133.0 };
+            if (code === 19) return { lat: 33.5, lon: 133.5 };
+            if (code === 20) return { lat: 32.5, lon: 131.0 };
+            if (code === 21) return { lat: 26.5, lon: 128.0 };
+            
+            if (code >= 100 && code < 200) return { lat: 43.5, lon: 142.5 };
+            if (code >= 200 && code < 210) return { lat: 40.5, lon: 141.0 };
+            if (code >= 210 && code < 220) return { lat: 39.5, lon: 141.5 };
+            if (code >= 220 && code < 230) return { lat: 38.3, lon: 141.0 };
+            if (code >= 300 && code < 400) return { lat: 35.5, lon: 139.5 };
+            if (code >= 500 && code < 600) return { lat: 35.0, lon: 135.5 };
+            return { lat: 36.0, lon: 138.0 };
+        }
 
         // タブ切り替え
         function switchTab(tabId) {
@@ -857,7 +1207,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         `;
                     }
                 }
-
+                updateMap(data.alerts || []);
             } catch (err) {
                 console.error(err);
                 document.getElementById('connection-dot').classList.remove('online');
@@ -981,6 +1331,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         }
 
         // 起動時および定期更新の開始
+        loadMapAssets();
         fetchStatus();
         setInterval(fetchStatus, 1500);
     </script>

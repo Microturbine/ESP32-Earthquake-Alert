@@ -121,7 +121,15 @@ void WebUIManager::handleGetStatus() {
         json += "{";
         json += "\"text\":\"" + String(activeAlerts[i].text) + "\",";
         json += "\"remaining\":" + String(remainingSec) + ",";
-        json += "\"isTest\":" + String(activeAlerts[i].isTest ? "true" : "false");
+        json += "\"isTest\":" + String(activeAlerts[i].isTest ? "true" : "false") + ",";
+        json += "\"lat\":" + String(activeAlerts[i].latitude, 4) + ",";
+        json += "\"lon\":" + String(activeAlerts[i].longitude, 4) + ",";
+        json += "\"cat\":" + String(activeAlerts[i].disasterCat) + ",";
+        json += "\"code\":" + String(activeAlerts[i].code) + ",";
+        
+        char maskStr[32];
+        snprintf(maskStr, sizeof(maskStr), "\"%llx\"", activeAlerts[i].prefMask);
+        json += "\"prefMask\":" + String(maskStr);
         json += "}";
         
         if (i < count - 1) {
@@ -193,17 +201,17 @@ void WebUIManager::handlePostTest() {
         
         if (type == "eq") {
             Serial.println("[WebUI] 模擬緊急地震速報テスト発報");
-            alertManager.addAlert("【模擬】緊急地震速報：震源地は関東地方、最大震度６強と推定。強い揺れに警戒してください。", 120000, false);
+            alertManager.addAlert("【模擬】緊急地震速報：震源地は関東地方、最大震度６強と推定。強い揺れに警戒してください。", 120000, false, 35.6, 140.0, 2, 350);
             server.send(200, "text/plain", "OK");
         } 
         else if (type == "tsunami") {
             Serial.println("[WebUI] 模擬大津波警報テスト発報");
-            alertManager.addAlert("【模擬】大津波警報：太平洋沿岸部。直ちに高台などの安全な場所に避難してください。", 120000, false);
+            alertManager.addAlert("【模擬】大津波警報：太平洋沿岸部。直ちに高台などの安全な場所に避難してください。", 120000, false, 38.2, 141.5, 5, 220);
             server.send(200, "text/plain", "OK");
         } 
         else if (type == "jalert") {
             Serial.println("[WebUI] 模擬Jアラートテスト発報");
-            alertManager.addAlert("【模擬】ミサイル発射：北朝鮮方面からミサイルが発射された模様。頑丈な建物や地下に避難してください。", 120000, false);
+            alertManager.addAlert("【模擬】ミサイル発射：北朝鮮方面からミサイルが発射された模様。頑丈な建物や地下に避難してください。", 120000, false, 0.0, 0.0, 44, 1, 0xC000000000000000ULL);
             server.send(200, "text/plain", "OK");
         } 
         else if (type == "hex" && server.hasArg("hex")) {

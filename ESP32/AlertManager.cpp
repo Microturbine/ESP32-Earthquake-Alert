@@ -10,7 +10,8 @@ AlertManager::AlertManager() {
     mutex = xSemaphoreCreateMutex();
 }
 
-bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest) {
+bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
+                            double latitude, double longitude, int disasterCat, int code, uint64_t prefMask) {
     bool added = false;
     if (xSemaphoreTake(mutex, portMAX_DELAY)) {
         uint32_t now = millis();
@@ -44,6 +45,11 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest) {
                     changedFlag = true;
                 }
                 alerts[i].isTest = isTest;
+                alerts[i].latitude = latitude;
+                alerts[i].longitude = longitude;
+                alerts[i].disasterCat = disasterCat;
+                alerts[i].code = code;
+                alerts[i].prefMask = prefMask;
                 found = true;
                 break;
             }
@@ -71,6 +77,11 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest) {
             alerts[alertCount].text[sizeof(alerts[alertCount].text) - 1] = '\0';
             alerts[alertCount].expiry = expiry;
             alerts[alertCount].isTest = isTest;
+            alerts[alertCount].latitude = latitude;
+            alerts[alertCount].longitude = longitude;
+            alerts[alertCount].disasterCat = disasterCat;
+            alerts[alertCount].code = code;
+            alerts[alertCount].prefMask = prefMask;
             alertCount++;
             added = true;
             newAlertFlag = true;

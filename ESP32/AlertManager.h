@@ -9,6 +9,11 @@ struct Alert {
     char text[256];
     uint32_t expiry;
     bool isTest;
+    double latitude;   // 0.0 means invalid/none
+    double longitude;  // 0.0 means invalid/none
+    int disasterCat;   // Disaster category code
+    int code;          // Region/Epicenter/Volcano code
+    uint64_t prefMask; // Affected prefectures bitmask (for MT44 etc)
 };
 
 class AlertManager {
@@ -16,7 +21,9 @@ public:
     AlertManager();
     
     // 警報を追加する。新たに追加された場合はtrueを返す
-    bool addAlert(const char* text, uint32_t timeoutMs, bool isTest);
+    bool addAlert(const char* text, uint32_t timeoutMs, bool isTest,
+                  double latitude = 0.0, double longitude = 0.0,
+                  int disasterCat = 0, int code = 0, uint64_t prefMask = 0);
     
     // 指定した文字列から始まる警報を削除する
     void removeAlertsStartWith(const char* prefix);
