@@ -20,14 +20,13 @@ public:
     
     // アラート保持・表示用
     int getEwsAlertState(); // 0:なし, 1:警報
-    const char* getEwsAlertText();
+    String getEwsAlertText();
     void resetAlert();
     void updateTimeouts(uint32_t now);
     
-    // メインタスク共用/カプセル化用
-    SemaphoreHandle_t i2cMutex;
-
 private:
+    SemaphoreHandle_t i2cMutex;
+    SemaphoreHandle_t stateMutex;
     RDA5807 rx;
     int audioInPin;
     EwsState currentState;

@@ -2,6 +2,8 @@
 #define QZSS_PARSER_H
 
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 class QzssParser {
 public:
@@ -10,18 +12,18 @@ public:
     
     // ステータス取得用
     int getQzssState(); // 0:なし, 1:試験, 2:災害警報
-    const char* getAlertText();
+    String getAlertText();
+    String getLastL1sHex();
     void updateTimeouts(uint32_t now);
     void decodeMT43(const uint8_t* l1s_msg);
     void decodeMT44(const uint8_t* l1s_msg);
     void resetAlert();
     
     // GPS & みちびき デバッグ用統計情報
-    uint32_t sfrbxCount;
-    uint32_t mt43Count;
-    uint32_t mt44Count;
-    uint32_t lastL1sTime;
-    char lastL1sHex[65];
+    volatile uint32_t sfrbxCount;
+    volatile uint32_t mt43Count;
+    volatile uint32_t mt44Count;
+    volatile uint32_t lastL1sTime;
 
 private:
     enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
@@ -33,7 +35,10 @@ private:
 
     int qzssState;
     uint32_t qzssTimeout;
-    char alertText[256];
+    char alertText[128];
+    char lastL1sHex[65];
+    
+    SemaphoreHandle_t qzssMutex;
 
     void processRxmSfrbx();
     uint32_t getUbxBits(const uint8_t* data, int offset, int length);

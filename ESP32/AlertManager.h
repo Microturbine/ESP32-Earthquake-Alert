@@ -6,7 +6,7 @@
 #include <freertos/semphr.h>
 
 struct Alert {
-    char text[256];
+    char text[128];
     uint32_t expiry;
     bool isTest;
     double latitude;   // 0.0 means invalid/none

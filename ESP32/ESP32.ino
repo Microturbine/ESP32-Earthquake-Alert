@@ -26,7 +26,7 @@ TaskHandle_t taskCore0Handle;
 int svCount = 0;
 char timeStr[10] = "--:--:--";
 char nmeaBuffer[82];
-int nmeaIndex = 80;
+int nmeaIndex = sizeof(nmeaBuffer);
 char lastGga[120] = "No Data";
 
 // 差分描画用変数
@@ -94,7 +94,7 @@ void processCommand(char* cmd) {
         } else if (mt == 44) {
             qzssParser.decodeMT44(l1s_msg);
         }
-        Serial.printf("結果: %s\n", qzssParser.getAlertText());
+        Serial.printf("結果: %s\n", qzssParser.getAlertText().c_str());
     } else if (cmd[0] == 'v' || cmd[0] == 'V') {
         int vol = atoi(&cmd[1]);
         if (vol >= 0 && vol <= 15) {
@@ -126,13 +126,16 @@ void taskCore0(void *pvParameters) {
     for (;;) {
         uint32_t now = millis();
 
-        // Bootボタン監視（押下でLOW）
-        if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+        // Bootボタン監視（押下でLOW）と簡易デバウンス (500ms)
+        static uint32_t lastButtonPressTime = 0;
+        if (digitalRead(BOOT_BUTTON_PIN) == LOW && (now - lastButtonPressTime > 500)) {
+            lastButtonPressTime = now;
             qzssParser.resetAlert();
             ewsDecoder.resetState();
             alertManager.clear();
             ledBlinkCount = 0;
             digitalWrite(ALERT_LED, LOW);
+            Serial.println("実機BOOTボタン押下によりアラートをクリアしました。");
         }
 
         // 1. LCD更新
@@ -269,7 +272,7 @@ void setup() {
     ewsDecoder.setVolume(settings.volume);
     
     xTaskCreatePinnedToCore(
-      taskCore0, "TaskCore0", 8192, NULL, 1, &taskCore0Handle, 0
+      taskCore0, "TaskCore0", 16384, NULL, 1, &taskCore0Handle, 0
     );
 }
 

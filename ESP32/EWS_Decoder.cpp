@@ -112,6 +112,7 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     ewsAlertTimeout = 0;
 
     i2cMutex = xSemaphoreCreateMutex();
+    stateMutex = xSemaphoreCreateMutex();
     Wire.begin(i2c_sda, i2c_scl);
     
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
@@ -125,22 +126,52 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
 }
 
 void EwsDecoder::resetState() {
-    currentState = SEARCH_SYNC;
-    bitIndex = 0;
-    bitBuffer = 0;
-    lastEwsActivityTime = 0;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        currentState = SEARCH_SYNC;
+        bitIndex = 0;
+        bitBuffer = 0;
+        lastEwsActivityTime = 0;
+        xSemaphoreGive(stateMutex);
+    }
     resetAlert();
 }
 
-int EwsDecoder::getEwsAlertState() { return ewsAlertState; }
-const char* EwsDecoder::getEwsAlertText() { return ewsAlertText; }
-void EwsDecoder::resetAlert() {
-    ewsAlertState = 0;
-    ewsAlertText[0] = '\0';
-    ewsAlertTimeout = 0;
+int EwsDecoder::getEwsAlertState() {
+    int s = 0;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        s = ewsAlertState;
+        xSemaphoreGive(stateMutex);
+    }
+    return s;
 }
+
+String EwsDecoder::getEwsAlertText() {
+    String text = "";
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        text = ewsAlertText;
+        xSemaphoreGive(stateMutex);
+    }
+    return text;
+}
+
+void EwsDecoder::resetAlert() {
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        ewsAlertState = 0;
+        ewsAlertText[0] = '\0';
+        ewsAlertTimeout = 0;
+        xSemaphoreGive(stateMutex);
+    }
+}
+
 void EwsDecoder::updateTimeouts(uint32_t now) {
-    if (ewsAlertState > 0 && now > ewsAlertTimeout) {
+    bool needReset = false;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        if (ewsAlertState > 0 && now > ewsAlertTimeout) {
+            needReset = true;
+        }
+        xSemaphoreGive(stateMutex);
+    }
+    if (needReset) {
         resetAlert();
     }
 }
@@ -178,11 +209,24 @@ int EwsDecoder::getRssi() {
 }
 
 EwsState EwsDecoder::getState() {
-    return currentState;
+    EwsState s = SEARCH_SYNC;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        s = currentState;
+        xSemaphoreGive(stateMutex);
+    }
+    return s;
 }
 
 void EwsDecoder::processAudio() {
-    if (currentState == DECODE_FRAME && (millis() - lastEwsActivityTime > 30000)) {
+    EwsState stateCopy = SEARCH_SYNC;
+    unsigned long lastActivity = 0;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        stateCopy = currentState;
+        lastActivity = lastEwsActivityTime;
+        xSemaphoreGive(stateMutex);
+    }
+
+    if (stateCopy == DECODE_FRAME && (millis() - lastActivity > 30000)) {
         Serial.println("\n--- [EWSタイムアウト自動リセット] ---");
         resetState();
     }
@@ -195,7 +239,9 @@ void EwsDecoder::processAudio() {
 
     for (int i = 0; i < N; i++) {
         samples[i] = analogRead(audioInPin) - 2048;
-        while (micros() - startTime < (i + 1) * (1000000 / SAMPLING_RATE));
+        while (micros() - startTime < (i + 1) * (1000000 / SAMPLING_RATE)) {
+            yield();
+        }
     }
 
     nextBitStartTime += 15625;
@@ -206,7 +252,7 @@ void EwsDecoder::processAudio() {
     bool bit = (p1024 > p640);
     bitBuffer = (bitBuffer << 1) | (bit ? 1 : 0);
 
-    switch (currentState) {
+    switch (stateCopy) {
     case SEARCH_SYNC: {
         uint32_t pattern = bitBuffer & 0xFFFFF;
         uint16_t syncPart = pattern & 0xFFFF;
@@ -214,10 +260,13 @@ void EwsDecoder::processAudio() {
 
         if ((syncPart == SYNC_TYPE_I || syncPart == SYNC_TYPE_II) &&
             (prePart == 0x0C || prePart == 0x03)) {
-            isEndSignal = (prePart == 0x03);
-            currentSyncType = syncPart;
-            currentState = DECODE_FRAME;
-            lastEwsActivityTime = millis();
+            if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+                isEndSignal = (prePart == 0x03);
+                currentSyncType = syncPart;
+                currentState = DECODE_FRAME;
+                lastEwsActivityTime = millis();
+                xSemaphoreGive(stateMutex);
+            }
             bitIndex = 20;
             for (int j = 0; j < 20; j++)
                 frameBits[19 - j] = (bitBuffer >> j) & 1;
@@ -227,7 +276,10 @@ void EwsDecoder::processAudio() {
 
     case DECODE_FRAME:
         frameBits[bitIndex++] = bit ? 1 : 0;
-        lastEwsActivityTime = millis();
+        if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+            lastEwsActivityTime = millis();
+            xSemaphoreGive(stateMutex);
+        }
 
         if (bitIndex >= 100) {
             Serial.println("\n--- [EWSブロック復調完了] ---");
@@ -272,11 +324,18 @@ void EwsDecoder::processAudio() {
             Serial.println("---------------------------");
 
             if (!isEndSignal) {
-                ewsAlertState = 1;
-                ewsAlertTimeout = millis() + 900000; // 15分後にタイムアウトするように設定
+                char localAlertText[64];
                 const char* typeName = (currentSyncType == SYNC_TYPE_II) ? "津波警報" : "第一種警報";
-                snprintf(ewsAlertText, sizeof(ewsAlertText), "FM %s:%s", typeName, getRegionName(areaData));
-                alertManager.addAlert(ewsAlertText, 900000, false);
+                snprintf(localAlertText, sizeof(localAlertText), "FM %s:%s", typeName, getRegionName(areaData));
+                
+                if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+                    ewsAlertState = 1;
+                    ewsAlertTimeout = millis() + 900000;
+                    strncpy(ewsAlertText, localAlertText, sizeof(ewsAlertText) - 1);
+                    ewsAlertText[sizeof(ewsAlertText) - 1] = '\0';
+                    xSemaphoreGive(stateMutex);
+                }
+                alertManager.addAlert(localAlertText, 900000, false);
             } else {
                 resetAlert();
                 alertManager.removeAlertsStartWith("FM ");
@@ -284,7 +343,10 @@ void EwsDecoder::processAudio() {
             }
 
             if (!isEndSignal || bitIndex >= 192) {
-                currentState = SEARCH_SYNC;
+                if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+                    currentState = SEARCH_SYNC;
+                    xSemaphoreGive(stateMutex);
+                }
                 bitIndex = 0;
                 bitBuffer = 0;
             }

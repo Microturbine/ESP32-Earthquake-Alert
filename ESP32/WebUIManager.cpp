@@ -95,22 +95,60 @@ void WebUIManager::handleRoot() {
     server.send(200, "text/html", WEBUI_HTML);
 }
 
+// JSON特殊文字エスケープ用のヘルパー関数
+static String escapeJsonString(const String& input) {
+    String output = "";
+    output.reserve(input.length() + 8); // 少し余裕を持たせて確保
+    for (size_t i = 0; i < input.length(); i++) {
+        char c = input[i];
+        if (c == '"') {
+            output += "\\\"";
+        } else if (c == '\\') {
+            output += "\\\\";
+        } else if (c == '/') {
+            output += "\\/";
+        } else if (c == '\b') {
+            output += "\\b";
+        } else if (c == '\f') {
+            output += "\\f";
+        } else if (c == '\n') {
+            output += "\\n";
+        } else if (c == '\r') {
+            output += "\\r";
+        } else if (c == '\t') {
+            output += "\\t";
+        } else if (c < 32) {
+            char hex[8];
+            snprintf(hex, sizeof(hex), "\\u%04x", c);
+            output += hex;
+        } else {
+            output += c;
+        }
+    }
+    return output;
+}
+
 void WebUIManager::handleGetStatus() {
     // 警報リストのコピー
     Alert activeAlerts[AlertManager::MAX_ALERTS];
     int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
     
-    String json = "{";
-    json += "\"freq\":" + String(ewsDecoder.getFrequency() / 100.0, 2) + ",";
-    json += "\"rssi\":" + String(ewsDecoder.getRssi()) + ",";
-    json += "\"volume\":" + String(settings.volume) + ",";
-    json += "\"region\":" + String(settings.myRegionCode) + ",";
-    json += "\"svCount\":" + String(svCount) + ",";
-    json += "\"time\":\"" + String(timeStr) + "\",";
-    json += "\"ewsState\":" + String((int)ewsDecoder.getState()) + ",";
-    json += "\"wifiMode\":\"" + (apMode ? String("AP") : String("STA")) + "\",";
-    json += "\"ip\":\"" + localIP + "\",";
-    json += "\"alerts\":[";
+    String json;
+    json.reserve(4096); // Pre-allocate to prevent heap fragmentation
+    
+    char headerBuf[256];
+    snprintf(headerBuf, sizeof(headerBuf),
+             "{\"freq\":%.2f,\"rssi\":%d,\"volume\":%d,\"region\":%d,\"svCount\":%d,\"time\":\"%s\",\"ewsState\":%d,\"wifiMode\":\"%s\",\"ip\":\"%s\",\"alerts\":[",
+             ewsDecoder.getFrequency() / 100.0,
+             ewsDecoder.getRssi(),
+             settings.volume,
+             settings.myRegionCode,
+             svCount,
+             timeStr,
+             (int)ewsDecoder.getState(),
+             apMode ? "AP" : "STA",
+             localIP.c_str());
+    json += headerBuf;
     
     uint32_t now = millis();
     for (int i = 0; i < count; i++) {
@@ -119,35 +157,48 @@ void WebUIManager::handleGetStatus() {
             remainingSec = (activeAlerts[i].expiry - now) / 1000;
         }
         
-        json += "{";
-        json += "\"text\":\"" + String(activeAlerts[i].text) + "\",";
-        json += "\"remaining\":" + String(remainingSec) + ",";
-        json += "\"isTest\":" + String(activeAlerts[i].isTest ? "true" : "false") + ",";
-        json += "\"lat\":" + String(activeAlerts[i].latitude, 4) + ",";
-        json += "\"lon\":" + String(activeAlerts[i].longitude, 4) + ",";
-        json += "\"cat\":" + String(activeAlerts[i].disasterCat) + ",";
-        json += "\"code\":" + String(activeAlerts[i].code) + ",";
+        String escapedText = escapeJsonString(activeAlerts[i].text);
         
         char maskStr[32];
-        snprintf(maskStr, sizeof(maskStr), "\"%llx\"", activeAlerts[i].prefMask);
-        json += "\"prefMask\":" + String(maskStr);
-        json += "}";
+        uint32_t prefMaskHigh = (uint32_t)(activeAlerts[i].prefMask >> 32);
+        uint32_t prefMaskLow = (uint32_t)(activeAlerts[i].prefMask & 0xFFFFFFFFULL);
+        snprintf(maskStr, sizeof(maskStr), "\"%08x%08x\"", prefMaskHigh, prefMaskLow);
         
+        char alertBuf[512];
+        snprintf(alertBuf, sizeof(alertBuf), 
+                 "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s}",
+                 escapedText.c_str(),
+                 remainingSec,
+                 activeAlerts[i].isTest ? "true" : "false",
+                 activeAlerts[i].latitude,
+                 activeAlerts[i].longitude,
+                 activeAlerts[i].disasterCat,
+                 activeAlerts[i].code,
+                 maskStr);
+                 
+        json += alertBuf;
         if (i < count - 1) {
             json += ",";
         }
     }
-    json += "]";
+    json += "],";
     
     // GPS & みちびき デバッグ情報
-    json += ",\"gpsGga\":\"" + String(lastGga) + "\"";
-    json += ",\"qzssSfrbxCount\":" + String(qzssParser.sfrbxCount);
-    json += ",\"qzssMt43Count\":" + String(qzssParser.mt43Count);
-    json += ",\"qzssMt44Count\":" + String(qzssParser.mt44Count);
-    json += ",\"lastL1sHex\":\"" + String(qzssParser.lastL1sHex) + "\"";
+    String escapedGga = escapeJsonString(lastGga);
+    String lastL1sHexStr = qzssParser.getLastL1sHex(); // Safe thread read
     uint32_t sinceLastL1s = (qzssParser.lastL1sTime > 0) ? (millis() - qzssParser.lastL1sTime) / 1000 : 99999;
-    json += ",\"sinceLastL1s\":" + String(sinceLastL1s);
-
+    
+    char tailBuf[256];
+    snprintf(tailBuf, sizeof(tailBuf), 
+             "\"gpsGga\":\"%s\",\"qzssSfrbxCount\":%u,\"qzssMt43Count\":%u,\"qzssMt44Count\":%u,\"lastL1sHex\":\"%s\",\"sinceLastL1s\":%u}",
+             escapedGga.c_str(),
+             (unsigned int)qzssParser.sfrbxCount,
+             (unsigned int)qzssParser.mt43Count,
+             (unsigned int)qzssParser.mt44Count,
+             lastL1sHexStr.c_str(),
+             (unsigned int)sinceLastL1s);
+             
+    json += tailBuf;
     json += "}";
     
     server.send(200, "application/json", json);
@@ -266,6 +317,16 @@ void WebUIManager::handlePostClear() {
 
 void WebUIManager::handleFavicon() {
     server.sendHeader("Cache-Control", "public, max-age=2592000"); // 30 days cache
-    server.send_P(200, "image/x-icon", (const char*)FAVICON_ICO, FAVICON_ICO_LEN);
+    server.setContentLength(FAVICON_ICO_LEN);
+    server.send(200, "image/x-icon", "");
+    // PROGMEM→RAMにコピーして送信（send_Pはバイナリのnullバイトで途切れる場合がある）
+    uint8_t buf[256];
+    size_t sent = 0;
+    while (sent < FAVICON_ICO_LEN) {
+        size_t chunk = min((size_t)256, FAVICON_ICO_LEN - sent);
+        memcpy_P(buf, FAVICON_ICO + sent, chunk);
+        server.sendContent((const char*)buf, chunk);
+        sent += chunk;
+    }
 }
 

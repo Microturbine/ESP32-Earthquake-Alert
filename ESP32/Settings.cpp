@@ -31,22 +31,39 @@ void Settings::save() {
 }
 
 void Settings::setFreq(int freq) {
-    defaultFreq = freq;
-    save();
+    if (defaultFreq != freq) {
+        defaultFreq = freq;
+        prefs.begin("ews_config", false);
+        prefs.putInt("freq", defaultFreq);
+        prefs.end();
+    }
 }
 
 void Settings::setVolume(int vol) {
-    volume = vol;
-    save();
+    if (volume != vol) {
+        volume = vol;
+        prefs.begin("ews_config", false);
+        prefs.putInt("vol", volume);
+        prefs.end();
+    }
 }
 
 void Settings::setRegion(uint32_t region) {
-    myRegionCode = region;
-    save();
+    if (myRegionCode != region) {
+        myRegionCode = region;
+        prefs.begin("ews_config", false);
+        prefs.putUInt("region", myRegionCode);
+        prefs.end();
+    }
 }
 
 void Settings::setWiFi(const String& ssid, const String& pass) {
-    wifiSSID = ssid;
-    wifiPassword = pass;
-    save();
+    if (wifiSSID != ssid || wifiPassword != pass) {
+        wifiSSID = ssid;
+        wifiPassword = pass;
+        prefs.begin("ews_config", false);
+        prefs.putString("wifi_ssid", wifiSSID);
+        prefs.putString("wifi_pass", wifiPassword);
+        prefs.end();
+    }
 }

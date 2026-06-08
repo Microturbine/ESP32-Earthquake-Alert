@@ -53,7 +53,7 @@ void DisplayManager::init() {
     canvas->setTextSize(1);
 }
 
-void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, int ewsState) {
+void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, EwsState ewsState) {
     canvas->fillScreen(TFT_BLACK);
 
     // 1行目
