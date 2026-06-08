@@ -27,6 +27,7 @@ int svCount = 0;
 char timeStr[10] = "--:--:--";
 char nmeaBuffer[82];
 int nmeaIndex = 80;
+char lastGga[120] = "No Data";
 
 // 差分描画用変数
 int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
@@ -206,6 +207,15 @@ void taskCore0(void *pvParameters) {
             if (c == '\n' && nmeaIndex > 6) {
                 nmeaBuffer[nmeaIndex] = '\0';
                 if (nmeaBuffer[0] == '$' && nmeaBuffer[3] == 'G' && nmeaBuffer[4] == 'G' && nmeaBuffer[5] == 'A') {
+                    // Copy raw NMEA sentence, strip trailing newlines
+                    strncpy(lastGga, nmeaBuffer, sizeof(lastGga) - 1);
+                    lastGga[sizeof(lastGga) - 1] = '\0';
+                    int ggaLen = strlen(lastGga);
+                    while (ggaLen > 0 && (lastGga[ggaLen - 1] == '\r' || lastGga[ggaLen - 1] == '\n')) {
+                        lastGga[ggaLen - 1] = '\0';
+                        ggaLen--;
+                    }
+
                     int commaCount = 0;
                     char* timeStart = NULL;
                     char* satStart = NULL;

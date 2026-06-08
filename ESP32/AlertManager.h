@@ -51,9 +51,9 @@ public:
     
     // 警報リストをスレッドセーフにコピーする
     int copyAlerts(Alert* dest, int maxCount);
+    static const int MAX_ALERTS = 16;
 
 private:
-    static const int MAX_ALERTS = 4;
     Alert alerts[MAX_ALERTS];
     int alertCount;
     

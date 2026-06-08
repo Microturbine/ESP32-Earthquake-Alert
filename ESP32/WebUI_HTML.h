@@ -544,8 +544,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         }
 
         @keyframes slideIn {
-            from { transform: translateY(10px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+            from { opacity: 0; }
+            to { opacity: 1; }
         }
 
         @keyframes fadeIn {
@@ -595,6 +595,45 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         .leaflet-popup-tip {
             background: var(--bg-secondary) !important;
             border: 1px solid var(--card-border) !important;
+        }
+
+        /* デバッグモニタースタイル */
+        .debug-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+        .debug-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 0.5rem 0.8rem;
+        }
+        .debug-item-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+        .debug-item-row > div {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 0.5rem 0.8rem;
+        }
+        .debug-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            display: block;
+            margin-bottom: 0.2rem;
+            font-weight: 500;
+        }
+        .debug-value {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .font-mono {
+            font-family: 'Courier New', Courier, monospace;
         }
     </style>
 </head>
@@ -799,6 +838,44 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     <button class="btn btn-danger btn-full" onclick="clearAlerts()" style="margin-top: 0.5rem;">
                         警報の初期化 (Reset)
                     </button>
+                </div>
+
+                <!-- GPS & みちびき デバッグモニター -->
+                <div class="card" style="margin-top: 1.5rem;">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2" ry="2"/><rect x="6" y="6" width="12" height="12"/></svg>
+                        GPS &amp; みちびき デバッグモニター
+                    </div>
+                    <div class="debug-grid">
+                        <div class="debug-item">
+                            <span class="debug-label">最終 GGA センテンス</span>
+                            <span class="debug-value font-mono" id="debug-gga" style="font-size:0.75rem; word-break:break-all;">--</span>
+                        </div>
+                        <div class="debug-item-row">
+                            <div>
+                                <span class="debug-label">SFRBX 受信数</span>
+                                <span class="debug-value" id="debug-sfrbx">0</span>
+                            </div>
+                            <div>
+                                <span class="debug-label">最終受信からの経過秒</span>
+                                <span class="debug-value" id="debug-l1s-elapsed">--</span>
+                            </div>
+                        </div>
+                        <div class="debug-item-row">
+                            <div>
+                                <span class="debug-label">MT43 (防災) 受信数</span>
+                                <span class="debug-value" id="debug-mt43">0</span>
+                            </div>
+                            <div>
+                                <span class="debug-label">MT44 (Jアラ) 受信数</span>
+                                <span class="debug-value" id="debug-mt44">0</span>
+                            </div>
+                        </div>
+                        <div class="debug-item">
+                            <span class="debug-label">最終みちびき生 L1S パケット (HEX)</span>
+                            <span class="debug-value font-mono" id="debug-l1s-hex" style="font-size:0.7rem; word-break:break-all; color: var(--info);">--</span>
+                        </div>
+                    </div>
                 </div>
 
             </div>
@@ -1128,6 +1205,29 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 }
                 document.getElementById('status-ews').innerText = ewsText;
                 document.getElementById('status-region').innerText = data.region;
+
+                // デバッグ情報の更新
+                document.getElementById('debug-gga').innerText = data.gpsGga || "--";
+                document.getElementById('debug-sfrbx').innerText = data.qzssSfrbxCount || 0;
+                document.getElementById('debug-mt43').innerText = data.qzssMt43Count || 0;
+                document.getElementById('debug-mt44').innerText = data.qzssMt44Count || 0;
+                document.getElementById('debug-l1s-hex').innerText = data.lastL1sHex || "--";
+
+                const elapsed = data.sinceLastL1s;
+                const elapsedEl = document.getElementById('debug-l1s-elapsed');
+                if (elapsed === 99999) {
+                    elapsedEl.innerText = "受信なし";
+                    elapsedEl.style.color = "var(--text-secondary)";
+                } else {
+                    elapsedEl.innerText = `${elapsed}秒前`;
+                    if (elapsed < 10) {
+                        elapsedEl.style.color = "var(--success)";
+                    } else if (elapsed < 30) {
+                        elapsedEl.style.color = "var(--warning)";
+                    } else {
+                        elapsedEl.style.color = "var(--danger)";
+                    }
+                }
 
                 // フォームの値を初回のみ設定
                 if (!document.activeElement || document.activeElement.tagName !== 'INPUT') {

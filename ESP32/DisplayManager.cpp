@@ -75,8 +75,8 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     bool testActive = alertManager.hasTestAlert();
 
     if (alertActive || testActive) {
-      Alert activeAlerts[4];
-      int count = alertManager.copyAlerts(activeAlerts, 4);
+      Alert activeAlerts[AlertManager::MAX_ALERTS];
+      int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
       
       bool allCancelled = (count > 0);
       for (int i = 0; i < count; i++) {

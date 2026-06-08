@@ -12,6 +12,11 @@ QzssParser::QzssParser() {
     qzssState = 0;
     qzssTimeout = 0;
     alertText[0] = '\0';
+    sfrbxCount = 0;
+    mt43Count = 0;
+    mt44Count = 0;
+    lastL1sTime = 0;
+    strcpy(lastL1sHex, "None");
 }
 
 int QzssParser::getQzssState() { return qzssState; }
@@ -84,6 +89,7 @@ void QzssParser::parseUbx(uint8_t c) {
 void QzssParser::processRxmSfrbx() {
     uint8_t gnssId = ubxPayload[0];
     if (gnssId == 5) { // 準天頂衛星(QZSS)
+        sfrbxCount++;
         uint8_t numWords = ubxPayload[4];
         if (numWords == 8) {
             uint8_t l1s_msg[32];
@@ -100,9 +106,20 @@ void QzssParser::processRxmSfrbx() {
             uint32_t mt = getUbxBits(l1s_msg, 8, 6);
 
             if (preamble == 0x53) {
+                lastL1sTime = millis();
+                // Store hex
+                char* p = lastL1sHex;
+                for (int i = 0; i < 32; i++) {
+                    sprintf(p, "%02X", l1s_msg[i]);
+                    p += 2;
+                }
+                *p = '\0';
+
                 if (mt == 43) {
+                    mt43Count++;
                     decodeMT43(l1s_msg);
                 } else if (mt == 44) {
+                    mt44Count++;
                     decodeMT44(l1s_msg);
                 }
             }
@@ -156,12 +173,16 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             } else if (disasterCat == 5) {
                 alertManager.removeAlertsStartWith("津波警報");
                 alertManager.removeAlertsStartWith("大津波警報");
+            } else if (disasterCat == 6) {
+                alertManager.removeAlertsStartWith("北西太平洋津波");
             } else if (disasterCat == 8) {
                 alertManager.removeAlertsStartWith("火山警報");
             } else if (disasterCat == 10) {
                 alertManager.removeAlertsStartWith("気象");
             } else if (disasterCat == 11) {
                 alertManager.removeAlertsStartWith("洪水");
+            } else if (disasterCat == 14) {
+                alertManager.removeAlertsStartWith("海上");
             }
             snprintf(alertText, sizeof(alertText), "災害警報(DC:%d) 取消/解除", disasterCat);
             alertManager.addAlert(alertText, 60000, false);
@@ -187,26 +208,50 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             break;
         }
         case 2: { // 震源
-            uint32_t mag = getUbxBits(l1s_msg, 106, 7); // Ma
-            uint32_t epi = getUbxBits(l1s_msg, 113, 10); // Ep
-            uint32_t depth = getUbxBits(l1s_msg, 54, 9); // De
+            uint32_t depth = getUbxBits(l1s_msg, 96, 9);
+            uint32_t mag = getUbxBits(l1s_msg, 105, 7);
+            uint32_t epi = getUbxBits(l1s_msg, 112, 10);
             
-            uint32_t latNs = getUbxBits(l1s_msg, 123, 1);
-            uint32_t latD = getUbxBits(l1s_msg, 124, 7);
-            uint32_t latM = getUbxBits(l1s_msg, 131, 6);
-            uint32_t lonEw = getUbxBits(l1s_msg, 137, 1);
-            uint32_t lonD = getUbxBits(l1s_msg, 138, 8);
-            uint32_t lonM = getUbxBits(l1s_msg, 146, 6);
+            uint32_t latNs = getUbxBits(l1s_msg, 122, 1);
+            uint32_t latD = getUbxBits(l1s_msg, 123, 7);
+            uint32_t latM = getUbxBits(l1s_msg, 130, 6);
+            uint32_t latS = getUbxBits(l1s_msg, 136, 6);
+            uint32_t lonEw = getUbxBits(l1s_msg, 142, 1);
+            uint32_t lonD = getUbxBits(l1s_msg, 143, 8);
+            uint32_t lonM = getUbxBits(l1s_msg, 151, 6);
+            uint32_t lonS = getUbxBits(l1s_msg, 157, 6);
 
             const char* epiName = getQzssName(epi, EPICENTER_TABLE, sizeof(EPICENTER_TABLE)/sizeof(QzssCodeMap));
             if (!epiName) epiName = "不明";
 
-            snprintf(alertText, sizeof(alertText), "震源(%s/M%.1f/深さ%dkm/%s%d度%d分/%s%d度%d分)", 
-                     epiName, mag/10.0, depth == 511 ? 0 : depth, latNs ? "S" : "N", latD, latM, lonEw ? "W" : "E", lonD, lonM);
+            char magStr[16];
+            if (mag == 127) {
+                snprintf(magStr, sizeof(magStr), "M不明");
+            } else if (mag == 101) {
+                snprintf(magStr, sizeof(magStr), "M10.0以上");
+            } else if (mag == 126) {
+                snprintf(magStr, sizeof(magStr), "M8.0以上");
+            } else {
+                snprintf(magStr, sizeof(magStr), "M%.1f", mag / 10.0);
+            }
+
+            char depthStr[24];
+            if (depth == 511) {
+                snprintf(depthStr, sizeof(depthStr), "深さ不明");
+            } else if (depth == 501) {
+                snprintf(depthStr, sizeof(depthStr), "深さ500km以上");
+            } else {
+                snprintf(depthStr, sizeof(depthStr), "深さ%dkm", depth);
+            }
+
+            snprintf(alertText, sizeof(alertText), "震源(%s/%s/%s/%s%d度%d分%d秒/%s%d度%d分%d秒)", 
+                     epiName, magStr, depthStr, 
+                     latNs ? "S" : "N", latD, latM, latS, 
+                     lonEw ? "W" : "E", lonD, lonM, lonS);
             
-            latitude = latD + latM / 60.0;
+            latitude = latD + latM / 60.0 + latS / 3600.0;
             if (latNs) latitude = -latitude;
-            longitude = lonD + lonM / 60.0;
+            longitude = lonD + lonM / 60.0 + lonS / 3600.0;
             if (lonEw) longitude = -longitude;
             code = epi;
             break;
@@ -356,6 +401,14 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             if (!dwName) dwName = "海上警報";
             const char* plName = getQzssName(pl, MARINE_FORECAST_TABLE, sizeof(MARINE_FORECAST_TABLE)/sizeof(QzssCodeMap));
             if (!plName) plName = "海域";
+
+            if (dw == 0) {
+                alertManager.removeAlertsStartWith("海上");
+                snprintf(alertText, sizeof(alertText), "海上警報解除(%s等)", plName);
+                alertManager.addAlert(alertText, 60000, false, 0.0, 0.0, disasterCat, pl);
+                return;
+            }
+
             snprintf(alertText, sizeof(alertText), "%s(%s)", dwName, plName);
             code = pl;
             break;

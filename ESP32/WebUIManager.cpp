@@ -12,6 +12,7 @@ WebUIManager webUIManager;
 // main/ESP32.ino 内のグローバル変数への参照
 extern int svCount;
 extern char timeStr[10];
+extern char lastGga[];
 
 WebUIManager::WebUIManager() : server(80), apMode(false), localIP("0.0.0.0"), activeSSID("") {}
 
@@ -96,8 +97,8 @@ void WebUIManager::handleRoot() {
 
 void WebUIManager::handleGetStatus() {
     // 警報リストのコピー
-    Alert activeAlerts[4];
-    int count = alertManager.copyAlerts(activeAlerts, 4);
+    Alert activeAlerts[AlertManager::MAX_ALERTS];
+    int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
     
     String json = "{";
     json += "\"freq\":" + String(ewsDecoder.getFrequency() / 100.0, 2) + ",";
@@ -137,6 +138,16 @@ void WebUIManager::handleGetStatus() {
         }
     }
     json += "]";
+    
+    // GPS & みちびき デバッグ情報
+    json += ",\"gpsGga\":\"" + String(lastGga) + "\"";
+    json += ",\"qzssSfrbxCount\":" + String(qzssParser.sfrbxCount);
+    json += ",\"qzssMt43Count\":" + String(qzssParser.mt43Count);
+    json += ",\"qzssMt44Count\":" + String(qzssParser.mt44Count);
+    json += ",\"lastL1sHex\":\"" + String(qzssParser.lastL1sHex) + "\"";
+    uint32_t sinceLastL1s = (qzssParser.lastL1sTime > 0) ? (millis() - qzssParser.lastL1sTime) / 1000 : 99999;
+    json += ",\"sinceLastL1s\":" + String(sinceLastL1s);
+
     json += "}";
     
     server.send(200, "application/json", json);

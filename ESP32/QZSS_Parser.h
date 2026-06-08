@@ -15,6 +15,13 @@ public:
     void decodeMT43(const uint8_t* l1s_msg);
     void decodeMT44(const uint8_t* l1s_msg);
     void resetAlert();
+    
+    // GPS & みちびき デバッグ用統計情報
+    uint32_t sfrbxCount;
+    uint32_t mt43Count;
+    uint32_t mt44Count;
+    uint32_t lastL1sTime;
+    char lastL1sHex[65];
 
 private:
     enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
