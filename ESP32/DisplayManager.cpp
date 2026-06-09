@@ -30,7 +30,7 @@ LGFX::LGFX(void) {
       auto cfg = _light_instance.config();
       cfg.pin_bl = 21;
       cfg.invert = false;
-      cfg.freq   = 44100;
+      cfg.freq   = 2000;
       cfg.pwm_channel = 7;
       _light_instance.config(cfg);
       _panel_instance.setLight(&_light_instance);

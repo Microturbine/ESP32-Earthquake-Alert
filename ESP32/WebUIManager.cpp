@@ -117,7 +117,7 @@ static String escapeJsonString(const String& input) {
             output += "\\r";
         } else if (c == '\t') {
             output += "\\t";
-        } else if (c < 32) {
+        } else if (c >= 0 && c < 32) {
             char hex[8];
             snprintf(hex, sizeof(hex), "\\u%04x", c);
             output += hex;
@@ -136,7 +136,7 @@ void WebUIManager::handleGetStatus() {
     String json;
     json.reserve(4096); // Pre-allocate to prevent heap fragmentation
     
-    char headerBuf[256];
+    char headerBuf[512];
     snprintf(headerBuf, sizeof(headerBuf),
              "{\"freq\":%.2f,\"rssi\":%d,\"volume\":%d,\"region\":%d,\"svCount\":%d,\"time\":\"%s\",\"ewsState\":%d,\"wifiMode\":\"%s\",\"ip\":\"%s\",\"alerts\":[",
              ewsDecoder.getFrequency() / 100.0,
@@ -189,9 +189,9 @@ void WebUIManager::handleGetStatus() {
     String lastL1sHexStr = qzssParser.getLastL1sHex(); // Safe thread read
     uint32_t sinceLastL1s = (qzssParser.lastL1sTime > 0) ? (millis() - qzssParser.lastL1sTime) / 1000 : 99999;
     
-    char tailBuf[256];
+    char tailBuf[512];
     snprintf(tailBuf, sizeof(tailBuf), 
-             "\"gpsGga\":\"%s\",\"qzssSfrbxCount\":%u,\"qzssMt43Count\":%u,\"qzssMt44Count\":%u,\"lastL1sHex\":\"%s\",\"sinceLastL1s\":%u}",
+             "\"gpsGga\":\"%s\",\"qzssSfrbxCount\":%u,\"qzssMt43Count\":%u,\"qzssMt44Count\":%u,\"lastL1sHex\":\"%s\",\"sinceLastL1s\":%u",
              escapedGga.c_str(),
              (unsigned int)qzssParser.sfrbxCount,
              (unsigned int)qzssParser.mt43Count,
@@ -201,6 +201,11 @@ void WebUIManager::handleGetStatus() {
              
     json += tailBuf;
     json += "}";
+    
+    // シリアルモニタへのデバッグ出力（JSON内容確認用）
+    Serial.println("\n--- [WebUI Status JSON Send] ---");
+    Serial.println(json);
+    Serial.println("--------------------------------\n");
     
     server.send(200, "application/json", json);
 }
