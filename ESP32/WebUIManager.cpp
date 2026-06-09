@@ -166,7 +166,7 @@ void WebUIManager::handleGetStatus() {
         
         char alertBuf[512];
         snprintf(alertBuf, sizeof(alertBuf), 
-                 "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s}",
+                 "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s,\"outOfRegion\":%s}",
                  escapedText.c_str(),
                  remainingSec,
                  activeAlerts[i].isTest ? "true" : "false",
@@ -174,7 +174,8 @@ void WebUIManager::handleGetStatus() {
                  activeAlerts[i].longitude,
                  activeAlerts[i].disasterCat,
                  activeAlerts[i].code,
-                 maskStr);
+                 maskStr,
+                 activeAlerts[i].isOutOfRegion ? "true" : "false");
                  
         json += alertBuf;
         if (i < count - 1) {

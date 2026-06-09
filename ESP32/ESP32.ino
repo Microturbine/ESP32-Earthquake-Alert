@@ -25,9 +25,10 @@ TaskHandle_t taskCore0Handle;
 
 int svCount = 0;
 char timeStr[10] = "--:--:--";
-char nmeaBuffer[82];
+char nmeaBuffer[90];
 int nmeaIndex = sizeof(nmeaBuffer);
 char lastGga[120] = "No Data";
+uint32_t lastGgaTime = 0;
 
 // 差分描画用変数
 int lastFreq = -1, lastRssi = -1, lastSvCount = -1, lastVol = -1;
@@ -141,6 +142,14 @@ void taskCore0(void *pvParameters) {
         // 1. LCD更新
         if (now - lastUpdate > 1000) {
             lastUpdate = now;
+            
+            // GPS Timeout check
+            if (lastGgaTime > 0 && now - lastGgaTime > 15000) {
+                svCount = 0;
+                strcpy(timeStr, "--:--:--");
+                strcpy(lastGga, "GPS Signal Lost");
+            }
+
             int freq = ewsDecoder.getFrequency();
             int rssi = ewsDecoder.getRssi();
             int vol = settings.volume;
@@ -156,7 +165,19 @@ void taskCore0(void *pvParameters) {
             // 新しいアラートの検知
             bool newAlert = alertManager.checkAndClearNewAlert() || 
                             (eState == DECODE_FRAME && lastEwsState == SEARCH_SYNC);
-            if (newAlert) {
+            
+            // Only blink LED if there is an active alert that affects our region
+            bool hasInRegionAlert = false;
+            Alert activeAlerts[AlertManager::MAX_ALERTS];
+            int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
+            for (int i = 0; i < count; i++) {
+                if (!activeAlerts[i].isOutOfRegion) {
+                    hasInRegionAlert = true;
+                    break;
+                }
+            }
+
+            if (newAlert && hasInRegionAlert) {
                 ledBlinkCount = 10; // 5回点滅
                 nextLedToggleTime = millis();
             }
@@ -206,10 +227,11 @@ void taskCore0(void *pvParameters) {
             uint8_t c = gpsSerial.read();
 
             if (c == '$') nmeaIndex = 0;
-            if (nmeaIndex < 80) nmeaBuffer[nmeaIndex++] = c;
+            if (nmeaIndex < 88) nmeaBuffer[nmeaIndex++] = c;
             if (c == '\n' && nmeaIndex > 6) {
                 nmeaBuffer[nmeaIndex] = '\0';
                 if (nmeaBuffer[0] == '$' && nmeaBuffer[3] == 'G' && nmeaBuffer[4] == 'G' && nmeaBuffer[5] == 'A') {
+                    lastGgaTime = millis();
                     // Copy raw NMEA sentence, strip trailing newlines
                     strncpy(lastGga, nmeaBuffer, sizeof(lastGga) - 1);
                     lastGga[sizeof(lastGga) - 1] = '\0';
@@ -231,7 +253,7 @@ void taskCore0(void *pvParameters) {
                     }
                     if (timeStart && satStart) {
                         svCount = atoi(satStart);
-                        if (timeStart[0] >= '0' && timeStart[0] <= '9' && timeStart[1] >= '0') {
+                        if (timeStart[0] >= '0' && timeStart[0] <= '9' && timeStart[1] >= '0' && timeStart[1] <= '9') {
                             int h = (timeStart[0]-'0')*10 + (timeStart[1]-'0');
                             int m = (timeStart[2]-'0')*10 + (timeStart[3]-'0');
                             int s = (timeStart[4]-'0')*10 + (timeStart[5]-'0');
@@ -240,7 +262,7 @@ void taskCore0(void *pvParameters) {
                         }
                     }
                 }
-                nmeaIndex = 80;
+                nmeaIndex = 88;
             }
 
             qzssParser.parseUbx(c);

@@ -43,10 +43,15 @@ private:
     char ewsAlertText[64];
     unsigned long ewsAlertTimeout;
     
+    int cachedFreq;
+    int cachedRssi;
+    
     float goertzel(int *samples, float targetFreq, int numSamples);
     uint32_t reverseBits(uint32_t val, int width);
     const char* getRegionName(uint16_t code);
     int lookup(uint8_t val, const uint8_t *table, int size, int offset);
+    bool decodeBCH3216(uint32_t &codeword);
+    uint16_t getPrefectureCodeFromEwsArea(uint16_t areaData);
 };
 
 extern EwsDecoder ewsDecoder;
