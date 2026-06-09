@@ -11,7 +11,7 @@ AlertManager::AlertManager() {
 }
 
 bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
-                            double latitude, double longitude, int disasterCat, int code, uint64_t prefMask) {
+                            double latitude, double longitude, int disasterCat, int code, uint64_t prefMask, bool isOutOfRegion) {
     bool added = false;
     if (xSemaphoreTake(mutex, portMAX_DELAY)) {
         uint32_t now = millis();
@@ -50,6 +50,7 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
                 alerts[i].disasterCat = disasterCat;
                 alerts[i].code = code;
                 alerts[i].prefMask = prefMask;
+                alerts[i].isOutOfRegion = isOutOfRegion;
                 found = true;
                 break;
             }
@@ -82,6 +83,7 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
             alerts[alertCount].disasterCat = disasterCat;
             alerts[alertCount].code = code;
             alerts[alertCount].prefMask = prefMask;
+            alerts[alertCount].isOutOfRegion = isOutOfRegion;
             alertCount++;
             added = true;
             newAlertFlag = true;
@@ -154,7 +156,7 @@ bool AlertManager::hasRealAlert() {
 
 bool AlertManager::hasRealAlertInternal() const {
     for (int i = 0; i < alertCount; i++) {
-        if (!alerts[i].isTest) {
+        if (!alerts[i].isTest && !alerts[i].isOutOfRegion) {
             return true;
         }
     }

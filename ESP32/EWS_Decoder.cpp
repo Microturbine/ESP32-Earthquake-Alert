@@ -110,6 +110,8 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     ewsAlertState = 0;
     ewsAlertText[0] = '\0';
     ewsAlertTimeout = 0;
+    cachedFreq = 8520;
+    cachedRssi = 0;
 
     i2cMutex = xSemaphoreCreateMutex();
     stateMutex = xSemaphoreCreateMutex();
@@ -179,6 +181,7 @@ void EwsDecoder::updateTimeouts(uint32_t now) {
 void EwsDecoder::setFrequency(int freq) {
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
         rx.setFrequency(freq);
+        cachedFreq = freq;
         xSemaphoreGive(i2cMutex);
     }
 }
@@ -191,21 +194,25 @@ void EwsDecoder::setVolume(int vol) {
 }
 
 int EwsDecoder::getFrequency() {
-    int f = 0;
+    int f = cachedFreq;
     if (xSemaphoreTake(i2cMutex, (TickType_t)5)) {
         f = rx.getFrequency();
+        if (f > 0) {
+            cachedFreq = f;
+        }
         xSemaphoreGive(i2cMutex);
     }
-    return f;
+    return cachedFreq;
 }
 
 int EwsDecoder::getRssi() {
-    int r = 0;
+    int r = cachedRssi;
     if (xSemaphoreTake(i2cMutex, (TickType_t)5)) {
         r = rx.getRssi();
+        cachedRssi = r;
         xSemaphoreGive(i2cMutex);
     }
-    return r;
+    return cachedRssi;
 }
 
 EwsState EwsDecoder::getState() {
@@ -231,8 +238,10 @@ void EwsDecoder::processAudio() {
         resetState();
     }
 
-    if (nextBitStartTime == 0)
-        nextBitStartTime = micros();
+    unsigned long now_micros = micros();
+    if (nextBitStartTime == 0 || (now_micros - nextBitStartTime > 15625 * 2)) {
+        nextBitStartTime = now_micros;
+    }
 
     int samples[N];
     unsigned long startTime = nextBitStartTime;
@@ -248,6 +257,11 @@ void EwsDecoder::processAudio() {
 
     float p1024 = goertzel(samples, 1024.0, N);
     float p640 = goertzel(samples, 640.0, N);
+
+    // Apply signal threshold check in SEARCH_SYNC to prevent false sync on noise
+    if (stateCopy == SEARCH_SYNC && (p1024 + p640) < SIGNAL_THRESHOLD) {
+        return;
+    }
 
     bool bit = (p1024 > p640);
     bitBuffer = (bitBuffer << 1) | (bit ? 1 : 0);
@@ -299,12 +313,45 @@ void EwsDecoder::processAudio() {
                 return val;
             };
 
-            uint16_t areaCode = getBlock(20);
-            uint16_t dateCode = getBlock(52);
-            uint16_t timeCode = getBlock(84);
+            auto getBlock32 = [&](int start) {
+                uint32_t val = 0;
+                for (int i = 0; i < 32; i++)
+                    val = (val << 1) | frameBits[start + i];
+                return val;
+            };
+
+            uint32_t areaBlock = getBlock32(20);
+            uint32_t dateBlock = getBlock32(52);
+
+            // BCH decoding & 1-bit error correction
+            if (!decodeBCH3216(areaBlock)) {
+                Serial.println("[EWS] BCH Error: Area block has uncorrectable errors. Rejecting frame.");
+                resetState();
+                return;
+            }
+            if (!decodeBCH3216(dateBlock)) {
+                Serial.println("[EWS] BCH Error: Date block has uncorrectable errors. Rejecting frame.");
+                resetState();
+                return;
+            }
+
+            uint16_t areaCode = (areaBlock >> 16) & 0xFFFF;
+            uint16_t dateCode = (dateBlock >> 16) & 0xFFFF;
+            uint16_t timeCode = getBlock(84); // Block 3 has only 16 bits, no parity
 
             uint16_t areaData = reverseBits((areaCode >> 2) & 0x0FFF, 12);
             Serial.printf("地域: %03X (%s)\n", areaData, getRegionName(areaData));
+
+            // Region filtering logic
+            uint16_t prefCode = getPrefectureCodeFromEwsArea(areaData);
+            bool isOutOfRegion = false;
+            if (settings.myRegionCode != 0 && prefCode != 0 && prefCode != 99) {
+                if (prefCode != settings.myRegionCode) {
+                    isOutOfRegion = true;
+                    Serial.printf("[EWS] 地域フィルタ: 自地域コード %d と一致しないため通知のみ（警告LED無効）にします (対象地域: %s / コード: %d)\n",
+                                  settings.myRegionCode, getRegionName(areaData), prefCode);
+                }
+            }
 
             int day = lookup((dateCode >> 8) & 0x1F, TABLE_DAY, 31, 1);
             int month = lookup(((dateCode >> 3) & 0x0F) << 1 | 1, TABLE_MONTH, 12, 1);
@@ -335,7 +382,7 @@ void EwsDecoder::processAudio() {
                     ewsAlertText[sizeof(ewsAlertText) - 1] = '\0';
                     xSemaphoreGive(stateMutex);
                 }
-                alertManager.addAlert(localAlertText, 900000, false);
+                alertManager.addAlert(localAlertText, 900000, false, 0.0, 0.0, 0, areaData, 0, isOutOfRegion);
             } else {
                 resetAlert();
                 alertManager.removeAlertsStartWith("FM ");
@@ -353,4 +400,42 @@ void EwsDecoder::processAudio() {
         }
         break;
     }
+}
+
+bool EwsDecoder::decodeBCH3216(uint32_t &codeword) {
+    uint32_t poly = 0x190F7; 
+    uint32_t reg = codeword;
+    for (int i = 0; i < 16; i++) {
+        if (reg & (1UL << (31 - i))) {
+            reg ^= (poly << (15 - i));
+        }
+    }
+    if (reg == 0) {
+        return true; 
+    }
+    for (int j = 0; j < 32; j++) {
+        uint32_t test_error = 1UL << j;
+        uint32_t test_reg = test_error;
+        for (int i = 0; i < 16; i++) {
+            if (test_reg & (1UL << (31 - i))) {
+                test_reg ^= (poly << (15 - i));
+            }
+        }
+        if (test_reg == reg) {
+            codeword ^= test_error;
+            Serial.printf("[BCH] 1-bit error corrected at bit %d\n", j);
+            return true;
+        }
+    }
+    return false; 
+}
+
+uint16_t EwsDecoder::getPrefectureCodeFromEwsArea(uint16_t areaData) {
+    if (areaData == 0xB2C) return 0; // Common
+    for (int i = 1; i <= 47; i++) {
+        if (PREFECTURES[i].code == areaData) {
+            return i;
+        }
+    }
+    return 99; // Unknown
 }

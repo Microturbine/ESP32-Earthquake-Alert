@@ -5,6 +5,22 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool isPrefectureAffected(const char* regName, const char* prefName) {
+    if (!regName || !prefName) return false;
+    char prefClean[32];
+    strncpy(prefClean, prefName, sizeof(prefClean) - 1);
+    prefClean[sizeof(prefClean) - 1] = '\0';
+    int len = strlen(prefClean);
+    if (len > 3) {
+        if (strcmp(&prefClean[len - 3], "県") == 0 ||
+            strcmp(&prefClean[len - 3], "府") == 0 ||
+            strcmp(&prefClean[len - 3], "都") == 0) {
+            prefClean[len - 3] = '\0';
+        }
+    }
+    return (strstr(regName, prefClean) != nullptr);
+}
+
 QzssParser qzssParser;
 
 QzssParser::QzssParser() {
@@ -188,6 +204,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
     uint32_t reportClass = getUbxBits(l1s_msg, 14, 3);
     uint32_t disasterCat = getUbxBits(l1s_msg, 17, 4);
     
+    bool isOutOfRegion = false;
+    const char* myPrefName = nullptr;
+    if (settings.myRegionCode != 0) {
+        myPrefName = getPrefectureJisName(settings.myRegionCode);
+    }
+    
     if (reportClass == 7) {
         if (alertManager.hasRealAlert()) {
             return;
@@ -202,7 +224,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             alertText[sizeof(alertText) - 1] = '\0';
             xSemaphoreGive(qzssMutex);
         }
-        alertManager.addAlert(localText, 15000, true);
+        alertManager.addAlert(localText, 15000, true, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
         return;
     }
     
@@ -238,7 +260,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             } else if (disasterCat == 14) {
                 alertManager.removeAlertsStartWith("海上");
             }
-            alertManager.addAlert(localText, 60000, false);
+            alertManager.addAlert(localText, 60000, false, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
             return;
         }
 
@@ -312,6 +334,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         case 3: { // 震度
             uint32_t maxInt = 0;
             uint32_t maxPl = 0;
+            bool affectsMyRegion = false;
             for (int i = 0; i < 16; i++) {
                 uint32_t es = getUbxBits(l1s_msg, 70 + i*9, 3);
                 uint32_t pl = getUbxBits(l1s_msg, 73 + i*9, 6);
@@ -319,12 +342,18 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                     maxInt = es;
                     maxPl = pl;
                 }
+                if (pl > 0 && settings.myRegionCode != 0 && pl == settings.myRegionCode) {
+                    affectsMyRegion = true;
+                }
             }
             if (maxInt > 0) {
                 const char* plName = getPrefectureJisName(maxPl);
                 if (!plName) plName = "各地";
                 snprintf(localText, sizeof(localText), "震度速報(最大震度%s / %s等)", getIntensityName(maxInt), plName);
                 code = maxPl;
+                if (settings.myRegionCode != 0 && !affectsMyRegion) {
+                    isOutOfRegion = true;
+                }
             } else {
                 snprintf(localText, sizeof(localText), "各地の震度情報");
             }
@@ -350,6 +379,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* regName = getTsunamiRegionName(reg);
             if (!regName) regName = "一部沿岸";
 
+            if (settings.myRegionCode != 0 && myPrefName) {
+                if (!isPrefectureAffected(regName, myPrefName)) {
+                    isOutOfRegion = true;
+                }
+            }
+
             if (codeVal == 2) {
                 if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
                     qzssTimeout = millis() + 60000;
@@ -361,7 +396,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 alertManager.removeAlertsStartWith("注意報/警報");
                 char cancelText[128];
                 snprintf(cancelText, sizeof(cancelText), "津波警報 解除(%s等)", regName);
-                alertManager.addAlert(cancelText, 60000, false);
+                alertManager.addAlert(cancelText, 60000, false, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
                 return;
             }
 
@@ -379,6 +414,13 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             uint32_t reg = getUbxBits(l1s_msg, 77, 7); // Pl_1
             const char* regName = getCoastalRegionName(reg);
             if (!regName) regName = "沿岸";
+            
+            if (settings.myRegionCode != 0 && myPrefName) {
+                if (!isPrefectureAffected(regName, myPrefName)) {
+                    isOutOfRegion = true;
+                }
+            }
+
             snprintf(localText, sizeof(localText), "北西太平洋津波(%s/Tp:%d)", regName, tp);
             code = reg;
             break;
@@ -418,6 +460,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* plName = getPrefecturalForecastName(pl);
             if (!plName) plName = "一部地域";
             
+            if (settings.myRegionCode != 0 && myPrefName) {
+                if (!isPrefectureAffected(plName, myPrefName)) {
+                    isOutOfRegion = true;
+                }
+            }
+
             snprintf(localText, sizeof(localText), "%s(%s)", wwName, plName);
             code = pl;
             break;
@@ -429,6 +477,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* riverName = getRiverName(riverCode);
             if (!riverName) riverName = "指定河川";
 
+            if (settings.myRegionCode != 0 && myPrefName) {
+                if (!isPrefectureAffected(riverName, myPrefName)) {
+                    isOutOfRegion = true;
+                }
+            }
+
             if (lv == 1) {
                 if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
                     qzssTimeout = millis() + 60000;
@@ -438,7 +492,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 alertManager.removeAlertsStartWith("洪水予報");
                 char cancelText[128];
                 snprintf(cancelText, sizeof(cancelText), "洪水予報 解除:%s", riverName);
-                alertManager.addAlert(cancelText, 60000, false);
+                alertManager.addAlert(cancelText, 60000, false, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
                 return;
             }
 
@@ -466,6 +520,12 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             const char* plName = getMarineForecastName(pl);
             if (!plName) plName = "海域";
 
+            if (settings.myRegionCode != 0 && myPrefName) {
+                if (!isPrefectureAffected(plName, myPrefName)) {
+                    isOutOfRegion = true;
+                }
+            }
+
             if (dw == 0) {
                 if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
                     snprintf(alertText, sizeof(alertText), "海上警報解除(%s等)", plName);
@@ -474,7 +534,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 alertManager.removeAlertsStartWith("海上");
                 char cancelText[128];
                 snprintf(cancelText, sizeof(cancelText), "海上警報解除(%s等)", plName);
-                alertManager.addAlert(cancelText, 60000, false, 0.0, 0.0, disasterCat, pl);
+                alertManager.addAlert(cancelText, 60000, false, 0.0, 0.0, disasterCat, pl, 0, isOutOfRegion);
                 return;
             }
 
@@ -494,7 +554,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             alertText[sizeof(alertText) - 1] = '\0';
             xSemaphoreGive(qzssMutex);
         }
-        alertManager.addAlert(localText, 60000, false, latitude, longitude, disasterCat, code);
+        alertManager.addAlert(localText, 60000, false, latitude, longitude, disasterCat, code, 0, isOutOfRegion);
     }
 }
 
@@ -505,6 +565,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
     uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // 災害カテゴリ(A4)
     uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // 避難勧告(A11)
 
+    bool isOutOfRegion = false;
     if (country == 111) { // 日本国コード
         if (msgType == 0) {
             if (alertManager.hasRealAlert()) {
@@ -518,7 +579,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 alertText[sizeof(alertText) - 1] = '\0';
                 xSemaphoreGive(qzssMutex);
             }
-            alertManager.addAlert(localText, 15000, true);
+            alertManager.addAlert(localText, 15000, true, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
         } else if (msgType == 1 || msgType == 2) {
             uint64_t prefMask = 0;
 
@@ -619,6 +680,16 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 }
             }
 
+            // Region filtering for J-Alert/L-Alert based on prefMask
+            if (settings.myRegionCode != 0 && prefMask != 0) {
+                uint64_t bitMask = (uint64_t)1 << (64 - settings.myRegionCode);
+                if ((prefMask & bitMask) == 0) {
+                    isOutOfRegion = true;
+                    Serial.printf("[QZSS] 地域フィルタ: 自地域コード %d が prefMask %08x%08x に含まれないため、警告LEDを無効にします\n",
+                                  settings.myRegionCode, (uint32_t)(prefMask >> 32), (uint32_t)(prefMask & 0xFFFFFFFF));
+                }
+            }
+
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
             char localText[128];
             snprintf(localText, sizeof(localText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
@@ -631,7 +702,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 alertText[sizeof(alertText) - 1] = '\0';
                 xSemaphoreGive(qzssMutex);
             }
-            alertManager.addAlert(localText, 60000, false, 0.0, 0.0, 44, hazardCat, prefMask);
+            alertManager.addAlert(localText, 60000, false, 0.0, 0.0, 44, hazardCat, prefMask, isOutOfRegion);
         } else if (msgType == 3) {
             char localText[128] = "Jアラート/Lアラート 警報解除";
             if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
@@ -643,7 +714,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             }
             alertManager.removeAlertsStartWith("Jアラート");
             alertManager.removeAlertsStartWith("Lアラート");
-            alertManager.addAlert(localText, 60000, false);
+            alertManager.addAlert(localText, 60000, false, 0.0, 0.0, 0, 0, 0, isOutOfRegion);
         }
     }
 }
