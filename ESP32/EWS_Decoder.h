@@ -24,6 +24,10 @@ public:
     void resetAlert();
     void updateTimeouts(uint32_t now);
     
+    // 消音制御
+    void setMute(bool mute);
+    bool getMute();
+    
 private:
     SemaphoreHandle_t i2cMutex;
     SemaphoreHandle_t stateMutex;
@@ -45,6 +49,8 @@ private:
     
     int cachedFreq;
     int cachedRssi;
+    bool manualUnmute;
+    bool isMuted;
     
     float goertzel(int *samples, float targetFreq, int numSamples);
     uint32_t reverseBits(uint32_t val, int width);

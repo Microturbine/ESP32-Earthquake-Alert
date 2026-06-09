@@ -18,10 +18,14 @@ class DisplayManager {
 public:
     void init();
     void update(int freq, int rssi, int vol, int svCount, const char* timeStr, EwsState ewsState);
+    void setScreenOff(bool off);
+    bool getScreenOff() const;
     
 private:
     LGFX tft;
     LGFX_Sprite* canvas;
+    bool screenOffEnabled;
+    uint8_t currentBrightness;
 };
 
 extern DisplayManager displayManager;

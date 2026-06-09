@@ -29,7 +29,7 @@ LGFX::LGFX(void) {
     {
       auto cfg = _light_instance.config();
       cfg.pin_bl = 21;
-      cfg.invert = false;
+      cfg.invert = true;
       cfg.freq   = 2000;
       cfg.pwm_channel = 7;
       _light_instance.config(cfg);
@@ -41,11 +41,13 @@ LGFX::LGFX(void) {
 DisplayManager displayManager;
 
 void DisplayManager::init() {
+    screenOffEnabled = false;
+    currentBrightness = 128;
     tft.init();
     tft.setRotation(1);
     tft.fillScreen(TFT_BLACK);
     tft.println("初期化中...");
-    tft.setBrightness(128);
+    tft.setBrightness(currentBrightness);
     
     canvas = new LGFX_Sprite(&tft);
     canvas->createSprite(284, 76);
@@ -54,6 +56,19 @@ void DisplayManager::init() {
 }
 
 void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char* timeStr, EwsState ewsState) {
+    bool alertActive = alertManager.hasRealAlert();
+    bool testActive = alertManager.hasTestAlert();
+    uint8_t targetBrightness = 128;
+    if (screenOffEnabled && !alertActive && !testActive) {
+        targetBrightness = 0;
+    } else {
+        targetBrightness = 128;
+    }
+    if (targetBrightness != currentBrightness) {
+        tft.setBrightness(targetBrightness);
+        currentBrightness = targetBrightness;
+    }
+
     canvas->fillScreen(TFT_BLACK);
 
     // 1行目
@@ -70,9 +85,6 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     canvas->printf("%d.%dMHz", freq / 100, (freq % 100) / 10);
 
     canvas->drawFastHLine(0, 20, 284, TFT_DARKGREY);
-
-    bool alertActive = alertManager.hasRealAlert();
-    bool testActive = alertManager.hasTestAlert();
 
     if (alertActive || testActive) {
       Alert activeAlerts[AlertManager::MAX_ALERTS];
@@ -145,4 +157,22 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     canvas->setFont(&fonts::Font0);
     
     canvas->pushSprite(0, 0);
+}
+
+void DisplayManager::setScreenOff(bool off) {
+    screenOffEnabled = off;
+    bool alertActive = alertManager.hasRealAlert();
+    bool testActive = alertManager.hasTestAlert();
+    uint8_t targetBrightness = 128;
+    if (screenOffEnabled && !alertActive && !testActive) {
+        targetBrightness = 0;
+    }
+    if (targetBrightness != currentBrightness) {
+        tft.setBrightness(targetBrightness);
+        currentBrightness = targetBrightness;
+    }
+}
+
+bool DisplayManager::getScreenOff() const {
+    return screenOffEnabled;
 }

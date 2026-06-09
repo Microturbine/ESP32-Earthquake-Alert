@@ -10,6 +10,7 @@
 #include "QZSS_Parser.h"
 #include "AlertManager.h"
 #include "WebUIManager.h"
+#include <WiFi.h>
 
 // ハードウェアピン
 #define AUDIO_IN_PIN 4
@@ -123,6 +124,7 @@ void taskCore0(void *pvParameters) {
     char cmdBuffer[128];
     int cmdIndex = 0;
     uint32_t lastUpdate = 0;
+    uint32_t lastWiFiCheck = 0;
 
     for (;;) {
         uint32_t now = millis();
@@ -266,6 +268,18 @@ void taskCore0(void *pvParameters) {
             }
 
             qzssParser.parseUbx(c);
+        }
+
+        // WiFi 自動再接続チェック (30秒おき)
+        if (!webUIManager.isAPMode() && settings.wifiSSID.length() > 0) {
+            if (now - lastWiFiCheck > 30000) {
+                lastWiFiCheck = now;
+                if (WiFi.status() != WL_CONNECTED) {
+                    Serial.println("[WiFi] 接続が切断されています。再接続を試みます...");
+                    WiFi.disconnect();
+                    WiFi.begin(settings.wifiSSID.c_str(), settings.wifiPassword.c_str());
+                }
+            }
         }
 
         webUIManager.handleClient();

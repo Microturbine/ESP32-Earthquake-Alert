@@ -17,6 +17,14 @@ struct Alert {
     bool isOutOfRegion;
 };
 
+struct HistoryAlert {
+    char text[128];
+    bool isTest;
+    bool isOutOfRegion;
+    uint32_t receivedMillis;
+    char receivedTimeStr[10]; // e.g. "12:34:56" or "No GPS"
+};
+
 class AlertManager {
 public:
     AlertManager();
@@ -54,10 +62,17 @@ public:
     // 警報リストをスレッドセーフにコピーする
     int copyAlerts(Alert* dest, int maxCount);
     static const int MAX_ALERTS = 16;
+    
+    // 警報履歴リストをスレッドセーフにコピーする
+    int copyHistory(HistoryAlert* dest, int maxCount);
+    static const int MAX_HISTORY = 10;
 
 private:
     Alert alerts[MAX_ALERTS];
     int alertCount;
+    
+    HistoryAlert history[MAX_HISTORY];
+    int historyCount;
     
     bool newAlertFlag;
     bool changedFlag;

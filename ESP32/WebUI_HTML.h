@@ -649,6 +649,134 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         .font-mono {
             font-family: 'Courier New', Courier, monospace;
         }
+
+        /* アクション用アイコンボタン */
+        .action-icon-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--card-border);
+            color: var(--text-primary);
+            border-radius: 8px;
+            padding: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 38px;
+            height: 38px;
+        }
+
+        .action-icon-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: var(--card-border-hover);
+            color: #fff;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.1);
+        }
+
+        .action-icon-btn:active {
+            transform: scale(0.95);
+        }
+
+        .action-icon-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+            box-shadow: 0 2px 8px var(--accent-glow);
+        }
+
+        .action-icon-btn.danger-active {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: #fff;
+            box-shadow: 0 2px 8px var(--danger-glow);
+        }
+
+        /* 履歴アイテムのレイアウト */
+        .history-section {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 0.3rem;
+        }
+
+        /* スクロールバーのカスタマイズ */
+        .history-section::-webkit-scrollbar {
+            width: 6px;
+        }
+        .history-section::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 999px;
+        }
+        .history-section::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 999px;
+        }
+        .history-section::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .history-item {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 0.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            transition: all 0.2s ease;
+        }
+
+        .history-item:hover {
+            border-color: var(--card-border-hover);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .history-badge {
+            font-size: 0.65rem;
+            font-weight: 700;
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            color: #fff;
+            background: var(--danger);
+        }
+
+        .history-badge.test {
+            background: var(--warning);
+        }
+
+        .history-badge.out-of-region {
+            background: var(--text-secondary);
+        }
+
+        .history-badge.cancel {
+            background: var(--success);
+        }
+
+        .history-time {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .history-body {
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+
+        .history-empty {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 2rem 0;
+        }
     </style>
 </head>
 <body>
@@ -659,9 +787,14 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 <h1>Disaster Alert Receiver</h1>
                 <p>みちびき L1S (QZSS) &amp; 地上 FM EWS ハイブリッドデコーダ</p>
             </div>
-            <div class="status-badge">
-                <div id="connection-dot" class="status-dot"></div>
-                <span id="connection-text">切断中</span>
+            <div style="display: flex; align-items: center; gap: 0.8rem;">
+                <button id="btn-screen-off" class="action-icon-btn" onclick="toggleScreenOff()" title="液晶バックライト消灯">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                </button>
+                <div class="status-badge">
+                    <div id="connection-dot" class="status-dot"></div>
+                    <span id="connection-text">切断中</span>
+                </div>
             </div>
         </header>
 
@@ -731,6 +864,17 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     </div>
                 </div>
 
+                <!-- 警報履歴モニター -->
+                <div class="card">
+                    <div class="card-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+                        警報履歴 (過去10件)
+                    </div>
+                    <div id="history-container" class="history-section">
+                        <div class="history-empty">履歴はありません</div>
+                    </div>
+                </div>
+
                 <!-- ステータスメーター -->
                 <div class="card">
                     <div class="card-title">
@@ -791,14 +935,66 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                             <div class="form-group">
                                 <label for="slider-vol">音声出力音量 (0 - 15)</label>
                                 <div class="slider-container">
-                                    <input type="range" min="0" max="15" id="slider-vol" oninput="updateVolValue(this.value)" onchange="sendVolume(this.value)">
+                                    <button id="btn-mute" type="button" class="action-icon-btn" onclick="toggleMute()" title="消音" style="margin-right: 0.2rem;">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                                    </button>
+                                    <input type="range" min="0" max="15" value="1" id="slider-vol" oninput="updateVolValue(this.value)" onchange="sendVolume(this.value)">
                                     <span class="slider-val" id="vol-value">1</span>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label for="input-region">自地域コード (0: 無効, 1-47: 都道府県)</label>
+                                <label for="select-region">自地域設定（警告フィルタ対象）</label>
                                 <div class="input-row">
-                                    <input type="number" min="0" max="99" id="input-region" class="form-control" required placeholder="例: 13 (東京)">
+                                    <select id="select-region" class="form-control" style="background: rgba(255, 255, 255, 0.04); color: white; border: 1px solid var(--card-border); border-radius: 8px; padding: 0.6rem 0.8rem; font-family: inherit; font-size: 0.9rem; min-width: 150px;">
+                                        <option value="0" style="background: var(--bg-secondary); color: white;">全国受信（フィルタ無効）</option>
+                                        <option value="1" style="background: var(--bg-secondary); color: white;">北海道</option>
+                                        <option value="2" style="background: var(--bg-secondary); color: white;">青森県</option>
+                                        <option value="3" style="background: var(--bg-secondary); color: white;">岩手県</option>
+                                        <option value="4" style="background: var(--bg-secondary); color: white;">宮城県</option>
+                                        <option value="5" style="background: var(--bg-secondary); color: white;">秋田県</option>
+                                        <option value="6" style="background: var(--bg-secondary); color: white;">山形県</option>
+                                        <option value="7" style="background: var(--bg-secondary); color: white;">福島県</option>
+                                        <option value="8" style="background: var(--bg-secondary); color: white;">茨城県</option>
+                                        <option value="9" style="background: var(--bg-secondary); color: white;">栃木県</option>
+                                        <option value="10" style="background: var(--bg-secondary); color: white;">群馬県</option>
+                                        <option value="11" style="background: var(--bg-secondary); color: white;">埼玉県</option>
+                                        <option value="12" style="background: var(--bg-secondary); color: white;">千葉県</option>
+                                        <option value="13" style="background: var(--bg-secondary); color: white;">東京都</option>
+                                        <option value="14" style="background: var(--bg-secondary); color: white;">神奈川県</option>
+                                        <option value="15" style="background: var(--bg-secondary); color: white;">新潟県</option>
+                                        <option value="16" style="background: var(--bg-secondary); color: white;">富山県</option>
+                                        <option value="17" style="background: var(--bg-secondary); color: white;">石川県</option>
+                                        <option value="18" style="background: var(--bg-secondary); color: white;">福井県</option>
+                                        <option value="19" style="background: var(--bg-secondary); color: white;">山梨県</option>
+                                        <option value="20" style="background: var(--bg-secondary); color: white;">長野県</option>
+                                        <option value="21" style="background: var(--bg-secondary); color: white;">岐阜県</option>
+                                        <option value="22" style="background: var(--bg-secondary); color: white;">静岡県</option>
+                                        <option value="23" style="background: var(--bg-secondary); color: white;">愛知県</option>
+                                        <option value="24" style="background: var(--bg-secondary); color: white;">三重県</option>
+                                        <option value="25" style="background: var(--bg-secondary); color: white;">滋賀県</option>
+                                        <option value="26" style="background: var(--bg-secondary); color: white;">京都府</option>
+                                        <option value="27" style="background: var(--bg-secondary); color: white;">大阪府</option>
+                                        <option value="28" style="background: var(--bg-secondary); color: white;">兵庫県</option>
+                                        <option value="29" style="background: var(--bg-secondary); color: white;">奈良県</option>
+                                        <option value="30" style="background: var(--bg-secondary); color: white;">和歌山県</option>
+                                        <option value="31" style="background: var(--bg-secondary); color: white;">鳥取県</option>
+                                        <option value="32" style="background: var(--bg-secondary); color: white;">島根県</option>
+                                        <option value="33" style="background: var(--bg-secondary); color: white;">岡山県</option>
+                                        <option value="34" style="background: var(--bg-secondary); color: white;">広島県</option>
+                                        <option value="35" style="background: var(--bg-secondary); color: white;">山口県</option>
+                                        <option value="36" style="background: var(--bg-secondary); color: white;">徳島県</option>
+                                        <option value="37" style="background: var(--bg-secondary); color: white;">香川県</option>
+                                        <option value="38" style="background: var(--bg-secondary); color: white;">愛媛県</option>
+                                        <option value="39" style="background: var(--bg-secondary); color: white;">高知県</option>
+                                        <option value="40" style="background: var(--bg-secondary); color: white;">福岡県</option>
+                                        <option value="41" style="background: var(--bg-secondary); color: white;">佐賀県</option>
+                                        <option value="42" style="background: var(--bg-secondary); color: white;">長崎県</option>
+                                        <option value="43" style="background: var(--bg-secondary); color: white;">熊本県</option>
+                                        <option value="44" style="background: var(--bg-secondary); color: white;">大分県</option>
+                                        <option value="45" style="background: var(--bg-secondary); color: white;">宮崎県</option>
+                                        <option value="46" style="background: var(--bg-secondary); color: white;">鹿児島県</option>
+                                        <option value="47" style="background: var(--bg-secondary); color: white;">沖縄県</option>
+                                    </select>
                                     <button type="button" onclick="submitRegion()" class="btn btn-secondary">設定</button>
                                 </div>
                                 <span style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.3rem;display:block;">
@@ -899,6 +1095,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
     <script>
         let isAPMode = false;
         let lastIp = "";
+        let currentMute = false;
+        let currentScreenOff = false;
 
         let map = null;
         let leafletLoaded = false;
@@ -1201,6 +1399,34 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 lastIp = data.ip || "";
                 text.innerText = `${data.wifiMode === "AP" ? "APモード" : "接続中"} (${lastIp})`;
 
+                // ミュートボタンの更新
+                currentMute = data.mute;
+                const muteBtn = document.getElementById('btn-mute');
+                if (muteBtn) {
+                    if (currentMute) {
+                        muteBtn.classList.add('danger-active');
+                        muteBtn.title = "消音中 (クリックでミュート解除)";
+                        muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>`;
+                    } else {
+                        muteBtn.classList.remove('danger-active');
+                        muteBtn.title = "音声出力中 (クリックで消音)";
+                        muteBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>`;
+                    }
+                }
+
+                // 画面消灯ボタンの更新
+                currentScreenOff = data.screenOff;
+                const screenOffBtn = document.getElementById('btn-screen-off');
+                if (screenOffBtn) {
+                    if (currentScreenOff) {
+                        screenOffBtn.classList.add('active');
+                        screenOffBtn.title = "画面消灯有効 (クリックで常時点灯)";
+                    } else {
+                        screenOffBtn.classList.remove('active');
+                        screenOffBtn.title = "常時点灯 (クリックで画面消灯)";
+                    }
+                }
+
                 // FMステータス
                 document.getElementById('status-freq').innerText = `${data.freq.toFixed(1)} MHz`;
                 document.getElementById('status-rssi').innerText = data.rssi;
@@ -1244,12 +1470,13 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 }
 
                 // フォームの値を初回のみ設定
-                if (!document.activeElement || document.activeElement.tagName !== 'INPUT') {
+                if (!document.activeElement || (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT')) {
                     if (document.getElementById('input-freq').value === "") {
                         document.getElementById('input-freq').value = data.freq.toFixed(1);
                     }
-                    if (document.getElementById('input-region').value === "") {
-                        document.getElementById('input-region').value = data.region;
+                    const selectRegion = document.getElementById('select-region');
+                    if (selectRegion && selectRegion.value === "") {
+                        selectRegion.value = data.region;
                     }
                 }
                 
@@ -1326,11 +1553,67 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     }
                 }
                 updateMap(data.alerts || []);
+
+                // 警報履歴の更新
+                const historyContainer = document.getElementById('history-container');
+                if (historyContainer) {
+                    if (data.history && data.history.length > 0) {
+                        const currentHistorySignature = data.history.map(h => h.text + "|" + h.time + "|" + h.isTest + "|" + h.outOfRegion).join("||");
+                        if (historyContainer.getAttribute('data-signature') !== currentHistorySignature) {
+                            historyContainer.setAttribute('data-signature', currentHistorySignature);
+                            let html = '';
+                            data.history.forEach(hist => {
+                                const isTest = hist.isTest;
+                                const isOutOfRegion = hist.outOfRegion;
+                                const isCancel = hist.text.includes("解除") || hist.text.includes("取消") || hist.text.includes("終了");
+                                let badgeClass = 'history-badge';
+                                let badgeText = '災害警報';
+                                
+                                if (isCancel) {
+                                    badgeClass = 'history-badge cancel';
+                                    badgeText = '解除';
+                                } else if (isOutOfRegion) {
+                                    badgeClass = 'history-badge out-of-region';
+                                    badgeText = '他地域';
+                                } else if (isTest) {
+                                    badgeClass = 'history-badge test';
+                                    badgeText = '訓練';
+                                }
+                                
+                                html += `
+                                    <div class="history-item">
+                                        <div class="history-header">
+                                            <span class="${badgeClass}">${badgeText}</span>
+                                            <span class="history-time">${hist.time}</span>
+                                        </div>
+                                        <div class="history-body">${hist.text}</div>
+                                    </div>
+                                `;
+                            });
+                            historyContainer.innerHTML = html;
+                        }
+                    } else {
+                        if (historyContainer.getAttribute('data-signature') !== "empty") {
+                            historyContainer.setAttribute('data-signature', "empty");
+                            historyContainer.innerHTML = `<div class="history-empty">履歴はありません</div>`;
+                        }
+                    }
+                }
             } catch (err) {
                 console.error(err);
                 document.getElementById('connection-dot').classList.remove('online');
                 document.getElementById('connection-text').innerText = "切断中 (再接続試行...)";
             }
+        }
+
+        // 消音切り替え
+        async function toggleMute() {
+            await sendSettings({ mute: currentMute ? 0 : 1 });
+        }
+
+        // 画面消灯切り替え
+        async function toggleScreenOff() {
+            await sendSettings({ screenOff: currentScreenOff ? 0 : 1 });
         }
 
         // ラジオ設定送信
@@ -1349,9 +1632,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
         // 地域コード送信
         async function submitRegion() {
-            const reg = parseInt(document.getElementById('input-region').value);
-            if (reg >= 0 && reg <= 99) {
-                await sendSettings({ region: reg });
+            const selectEl = document.getElementById('select-region');
+            if (selectEl) {
+                const reg = parseInt(selectEl.value);
+                if (reg >= 0 && reg <= 99) {
+                    await sendSettings({ region: reg });
+                }
             }
         }
 

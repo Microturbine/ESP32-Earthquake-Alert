@@ -5,6 +5,7 @@
 #include "AlertManager.h"
 #include "QZSS_Parser.h"
 #include "EWS_Decoder.h"
+#include "DisplayManager.h"
 #include <WiFi.h>
 
 WebUIManager webUIManager;
@@ -92,7 +93,7 @@ void WebUIManager::setupRoutes() {
 }
 
 void WebUIManager::handleRoot() {
-    server.send(200, "text/html", WEBUI_HTML);
+    server.send_P(200, "text/html", WEBUI_HTML);
 }
 
 // JSON特殊文字エスケープ用のヘルパー関数
@@ -133,12 +134,16 @@ void WebUIManager::handleGetStatus() {
     Alert activeAlerts[AlertManager::MAX_ALERTS];
     int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
     
+    // 警報履歴のコピー
+    HistoryAlert histAlerts[AlertManager::MAX_HISTORY];
+    int histCount = alertManager.copyHistory(histAlerts, AlertManager::MAX_HISTORY);
+    
     String json;
     json.reserve(4096); // Pre-allocate to prevent heap fragmentation
     
     char headerBuf[512];
     snprintf(headerBuf, sizeof(headerBuf),
-             "{\"freq\":%.2f,\"rssi\":%d,\"volume\":%d,\"region\":%d,\"svCount\":%d,\"time\":\"%s\",\"ewsState\":%d,\"wifiMode\":\"%s\",\"ip\":\"%s\",\"alerts\":[",
+             "{\"freq\":%.2f,\"rssi\":%d,\"volume\":%d,\"region\":%d,\"svCount\":%d,\"time\":\"%s\",\"ewsState\":%d,\"wifiMode\":\"%s\",\"ip\":\"%s\",\"mute\":%s,\"screenOff\":%s,\"alerts\":[",
              ewsDecoder.getFrequency() / 100.0,
              ewsDecoder.getRssi(),
              settings.volume,
@@ -147,7 +152,9 @@ void WebUIManager::handleGetStatus() {
              timeStr,
              (int)ewsDecoder.getState(),
              apMode ? "AP" : "STA",
-             localIP.c_str());
+             localIP.c_str(),
+             ewsDecoder.getMute() ? "true" : "false",
+             displayManager.getScreenOff() ? "true" : "false");
     json += headerBuf;
     
     uint32_t now = millis();
@@ -179,6 +186,24 @@ void WebUIManager::handleGetStatus() {
                  
         json += alertBuf;
         if (i < count - 1) {
+            json += ",";
+        }
+    }
+    json += "],";
+    
+    // 警報履歴のシリアライズ
+    json += "\"history\":[";
+    for (int i = 0; i < histCount; i++) {
+        String escapedText = escapeJsonString(histAlerts[i].text);
+        char histBuf[256];
+        snprintf(histBuf, sizeof(histBuf),
+                 "{\"text\":\"%s\",\"isTest\":%s,\"outOfRegion\":%s,\"time\":\"%s\"}",
+                 escapedText.c_str(),
+                 histAlerts[i].isTest ? "true" : "false",
+                 histAlerts[i].isOutOfRegion ? "true" : "false",
+                 histAlerts[i].receivedTimeStr);
+        json += histBuf;
+        if (i < histCount - 1) {
             json += ",";
         }
     }
@@ -241,6 +266,20 @@ void WebUIManager::handlePostSettings() {
             updated = true;
             Serial.printf("[WebUI] 地域コード設定変更: %d\n", reg);
         }
+    }
+    
+    if (server.hasArg("mute")) {
+        bool m = (server.arg("mute") == "1");
+        ewsDecoder.setMute(m);
+        updated = true;
+        Serial.printf("[WebUI] 消音設定変更: %s\n", m ? "ON (消音)" : "OFF (音声出力)");
+    }
+    
+    if (server.hasArg("screenOff")) {
+        bool off = (server.arg("screenOff") == "1");
+        displayManager.setScreenOff(off);
+        updated = true;
+        Serial.printf("[WebUI] 画面消灯設定変更: %s\n", off ? "ON (通常時消灯)" : "OFF (常時点灯)");
     }
     
     if (server.hasArg("ssid")) {

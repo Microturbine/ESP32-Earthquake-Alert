@@ -2,9 +2,11 @@
 #include <string.h>
 
 AlertManager alertManager;
+extern char timeStr[10];
 
 AlertManager::AlertManager() {
     alertCount = 0;
+    historyCount = 0;
     newAlertFlag = false;
     changedFlag = false;
     mutex = xSemaphoreCreateMutex();
@@ -88,6 +90,23 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
             added = true;
             newAlertFlag = true;
             changedFlag = true;
+
+            // 履歴ログへの追加
+            int startIdx = (historyCount < MAX_HISTORY - 1) ? historyCount : (MAX_HISTORY - 1);
+            for (int j = startIdx; j > 0; j--) {
+                history[j] = history[j - 1];
+            }
+            strncpy(history[0].text, text, sizeof(history[0].text) - 1);
+            history[0].text[sizeof(history[0].text) - 1] = '\0';
+            history[0].isTest = isTest;
+            history[0].isOutOfRegion = isOutOfRegion;
+            history[0].receivedMillis = now;
+            strncpy(history[0].receivedTimeStr, timeStr, sizeof(history[0].receivedTimeStr) - 1);
+            history[0].receivedTimeStr[sizeof(history[0].receivedTimeStr) - 1] = '\0';
+
+            if (historyCount < MAX_HISTORY) {
+                historyCount++;
+            }
         }
         
         xSemaphoreGive(mutex);
@@ -203,6 +222,18 @@ int AlertManager::copyAlerts(Alert* dest, int maxCount) {
         count = (alertCount < maxCount) ? alertCount : maxCount;
         for (int i = 0; i < count; i++) {
             dest[i] = alerts[i];
+        }
+        xSemaphoreGive(mutex);
+    }
+    return count;
+}
+
+int AlertManager::copyHistory(HistoryAlert* dest, int maxCount) {
+    int count = 0;
+    if (xSemaphoreTake(mutex, portMAX_DELAY)) {
+        count = (historyCount < maxCount) ? historyCount : maxCount;
+        for (int i = 0; i < count; i++) {
+            dest[i] = history[i];
         }
         xSemaphoreGive(mutex);
     }

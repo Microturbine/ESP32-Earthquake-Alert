@@ -113,6 +113,8 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     ewsAlertTimeout = 0;
     cachedFreq = 8520;
     cachedRssi = 0;
+    manualUnmute = false;
+    isMuted = true;
 
     i2cMutex = xSemaphoreCreateMutex();
     stateMutex = xSemaphoreCreateMutex();
@@ -121,7 +123,7 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
         rx.setup();
         rx.setBand(1);
-        rx.setMute(false);
+        rx.setMute(true); // スタンバイ時の砂嵐音を防ぐため消音（ミュート）で起動
         rx.setMono(true);
         xSemaphoreGive(i2cMutex);
     }
@@ -228,10 +230,21 @@ EwsState EwsDecoder::getState() {
 void EwsDecoder::processAudio() {
     EwsState stateCopy = SEARCH_SYNC;
     unsigned long lastActivity = 0;
+    bool mUnmute = false;
     if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
         stateCopy = currentState;
         lastActivity = lastEwsActivityTime;
+        mUnmute = manualUnmute;
         xSemaphoreGive(stateMutex);
+    }
+
+    bool targetMute = (stateCopy == DECODE_FRAME) ? false : !mUnmute;
+    if (targetMute != isMuted) {
+        if (xSemaphoreTake(i2cMutex, (TickType_t)5)) {
+            rx.setMute(targetMute);
+            isMuted = targetMute;
+            xSemaphoreGive(i2cMutex);
+        }
     }
 
     if (stateCopy == DECODE_FRAME && (millis() - lastActivity > 30000)) {
@@ -439,4 +452,25 @@ uint16_t EwsDecoder::getPrefectureCodeFromEwsArea(uint16_t areaData) {
         }
     }
     return 99; // Unknown
+}
+
+void EwsDecoder::setMute(bool mute) {
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
+        manualUnmute = !mute;
+        xSemaphoreGive(stateMutex);
+    }
+    if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        rx.setMute(mute);
+        isMuted = mute;
+        xSemaphoreGive(i2cMutex);
+    }
+}
+
+bool EwsDecoder::getMute() {
+    bool m = true;
+    if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
+        m = isMuted;
+        xSemaphoreGive(i2cMutex);
+    }
+    return m;
 }
