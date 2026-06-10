@@ -971,6 +971,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     <div class="control-tabs">
                         <button class="tab-btn active" onclick="switchTab('tab-radio')">受信設定</button>
                         <button class="tab-btn" onclick="switchTab('tab-wifi')">WiFi設定</button>
+                        <button class="tab-btn" onclick="switchTab('tab-system')">システム</button>
                     </div>
 
                     <!-- 受信設定タブ -->
@@ -1071,6 +1072,20 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                 ※保存後、デバイスは再起動します
                             </span>
                         </form>
+                    </div>
+
+                    <!-- システム設定タブ -->
+                    <div id="tab-system" class="tab-content">
+                        <div class="form-group" style="text-align: center; padding: 10px 0;">
+                            <label>ファームウェア更新</label>
+                            <a href="/update" class="btn btn-full" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 0.5rem;">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                WiFi経由でアップデート (OTA)
+                            </a>
+                            <span style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.8rem;display:block;text-align:center;">
+                                ※ブラウザからファームウェアのバイナリファイル(.bin)をアップロードして書き込むことができます。
+                            </span>
+                        </div>
                     </div>
                 </div>
 

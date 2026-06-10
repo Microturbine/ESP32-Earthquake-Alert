@@ -7,6 +7,9 @@
 #include "EWS_Decoder.h"
 #include "DisplayManager.h"
 #include <WiFi.h>
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#include <Update.h>
 
 WebUIManager webUIManager;
 
@@ -68,6 +71,10 @@ void WebUIManager::init() {
         Serial.printf("APモード起動。SSID: %s, IP: %s\n", apName.c_str(), localIP.c_str());
     }
     
+    if (MDNS.begin("esp32-alert-decoder")) {
+        Serial.println("mDNS responder started: http://esp32-alert-decoder.local/");
+    }
+    setupOTA();
     setupRoutes();
     server.begin();
     Serial.println("HTTP Webサーバー起動完了 (Port: 80)");
@@ -96,6 +103,30 @@ void WebUIManager::setupRoutes() {
     server.on("/api/settings", HTTP_POST, std::bind(&WebUIManager::handlePostSettings, this));
     server.on("/api/test", HTTP_POST, std::bind(&WebUIManager::handlePostTest, this));
     server.on("/api/clear", HTTP_POST, std::bind(&WebUIManager::handlePostClear, this));
+    
+    // Web OTA アップデート用ルート
+    server.on("/update", HTTP_GET, std::bind(&WebUIManager::handleGetUpdate, this));
+    server.on("/update", HTTP_POST, 
+              std::bind(&WebUIManager::handlePostUpdate, this), 
+              [this]() {
+                  HTTPUpload& upload = server.upload();
+                  if (upload.status == UPLOAD_FILE_START) {
+                      Serial.printf("Update File Start: %s\n", upload.filename.c_str());
+                      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // 最大空きサイズで開始
+                          Update.printError(Serial);
+                      }
+                  } else if (upload.status == UPLOAD_FILE_WRITE) {
+                      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                          Update.printError(Serial);
+                      }
+                  } else if (upload.status == UPLOAD_FILE_END) {
+                      if (Update.end(true)) { // 進捗に合わせてサイズを確定
+                          Serial.printf("Update Success: %u bytes\n", upload.totalSize);
+                      } else {
+                          Update.printError(Serial);
+                      }
+                  }
+              });
 }
 
 void WebUIManager::handleRoot() {
@@ -399,5 +430,276 @@ void WebUIManager::handleFavicon() {
         server.sendContent((const char*)buf, chunk);
         sent += chunk;
     }
+}
+
+void WebUIManager::handleGetUpdate() {
+    const char* updateHtml = R"rawhtml(
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ファームウェア更新 | 災害警報デコーダー</title>
+    <style>
+        :root {
+            --bg-primary: #0a0712;
+            --bg-secondary: #130f22;
+            --card-bg: rgba(25, 20, 42, 0.55);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --text-primary: #f4f3f6;
+            --text-secondary: #9c97aa;
+            --accent: #8b5cf6;
+            --accent-hover: #a78bfa;
+            --accent-glow: rgba(139, 92, 246, 0.3);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: sans-serif;
+            background-color: var(--bg-primary);
+            background-image: radial-gradient(at 50% 50%, rgba(139, 92, 246, 0.15) 0px, transparent 60%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2rem;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 8px 32px var(--accent-glow);
+            text-align: center;
+        }
+        h2 {
+            font-size: 1.4rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #fff 0%, var(--text-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+        .file-drop-area {
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: 12px;
+            padding: 2rem 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 1.5rem;
+            position: relative;
+        }
+        .file-drop-area:hover {
+            border-color: var(--accent);
+            background: rgba(139, 92, 246, 0.05);
+        }
+        .file-input {
+            position: absolute;
+            left: 0; top: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+        .file-msg {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        .btn {
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 0.75rem 1.5rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+        .btn:hover {
+            background: var(--accent-hover);
+            box-shadow: 0 0 16px var(--accent-glow);
+        }
+        .btn:disabled {
+            background: #3f3b4f;
+            color: #7d788c;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        .back-link {
+            display: inline-block;
+            margin-top: 1.5rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.8rem;
+            transition: color 0.2s;
+        }
+        .back-link:hover { color: #fff; }
+        #progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin-top: 1.2rem;
+            display: none;
+        }
+        #progress-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--accent);
+            border-radius: 9999px;
+            transition: width 0.1s ease;
+        }
+        #status-msg {
+            margin-top: 0.8rem;
+            font-size: 0.85rem;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>ファームウェア更新 (OTA)</h2>
+        <p>コンパイルされたバイナリファイル (.bin) を選択してください。</p>
+        
+        <form id="upload-form" method="POST" action="/update" enctype="multipart/form-data">
+            <div class="file-drop-area" id="drop-area">
+                <span class="file-msg" id="file-name-display">ファイルを選択するか、ここにドラッグ＆ドロップ</span>
+                <input type="file" name="update" id="file-input" class="file-input" required accept=".bin" onchange="fileSelected()">
+            </div>
+            <button type="submit" class="btn" id="submit-btn" disabled>アップデート開始</button>
+        </form>
+        
+        <div id="progress-bar-container">
+            <div id="progress-bar"></div>
+        </div>
+        <div id="status-msg"></div>
+        
+        <a href="/" class="back-link">← ダッシュボードへ戻る</a>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const submitBtn = document.getElementById('submit-btn');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const uploadForm = document.getElementById('upload-form');
+        const progressBarContainer = document.getElementById('progress-bar-container');
+        const progressBar = document.getElementById('progress-bar');
+        const statusMsg = document.getElementById('status-msg');
+
+        function fileSelected() {
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                fileNameDisplay.innerText = file.name + ' (' + (file.size / 1024 / 1024).toFixed(2) + ' MB)';
+                submitBtn.disabled = false;
+            } else {
+                fileNameDisplay.innerText = 'ファイルを選択するか、ここにドラッグ＆ドロップ';
+                submitBtn.disabled = true;
+            }
+        }
+
+        uploadForm.onsubmit = function(e) {
+            e.preventDefault();
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            submitBtn.disabled = true;
+            progressBarContainer.style.display = 'block';
+            statusMsg.style.display = 'block';
+            statusMsg.style.color = 'var(--text-secondary)';
+            statusMsg.innerText = 'アップロード中...';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/update', true);
+
+            xhr.upload.onprogress = function(e) {
+                if (e.lengthComputable) {
+                    const percent = (e.loaded / e.total) * 100;
+                    progressBar.style.width = percent + '%';
+                    statusMsg.innerText = 'アップロード中... ' + percent.toFixed(0) + '%';
+                }
+            };
+
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    statusMsg.style.color = '#10b981';
+                    statusMsg.innerText = '更新が成功しました！デバイスが自動再起動します。5秒後にダッシュボードに戻ります。';
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 5000);
+                } else {
+                    statusMsg.style.color = '#ef4444';
+                    statusMsg.innerText = '更新に失敗しました: ' + xhr.responseText;
+                    submitBtn.disabled = false;
+                }
+            };
+
+            xhr.onerror = function() {
+                statusMsg.style.color = '#ef4444';
+                statusMsg.innerText = '接続エラーが発生しました。';
+                submitBtn.disabled = false;
+            };
+
+            const formData = new FormData(uploadForm);
+            xhr.send(formData);
+        };
+    </script>
+</body>
+</html>
+)rawhtml";
+    server.send(200, "text/html", updateHtml);
+}
+
+void WebUIManager::handlePostUpdate() {
+    server.sendHeader("Connection", "close");
+    if (Update.hasError()) {
+        server.send(500, "text/plain", "Update Failed: " + String(Update.errorString()));
+    } else {
+        server.send(200, "text/html", "<html><body><h2>Update Success! Rebooting...</h2></body></html>");
+        delay(1000);
+        ESP.restart();
+    }
+}
+
+void WebUIManager::setupOTA() {
+    String host = "esp32-alert-decoder";
+    ArduinoOTA.setHostname(host.c_str());
+
+    ArduinoOTA.onStart([]() {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH) {
+            type = "sketch";
+        } else {
+            type = "filesystem";
+        }
+        Serial.println("Start updating " + type);
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    });
+
+    ArduinoOTA.begin();
+    Serial.println("ArduinoOTA started");
 }
 

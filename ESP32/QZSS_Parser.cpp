@@ -157,7 +157,7 @@ void QzssParser::processRxmSfrbx() {
             uint32_t preamble = getUbxBits(l1s_msg, 0, 8);
             uint32_t mt = getUbxBits(l1s_msg, 8, 6);
 
-            if (preamble == 0x53) {
+            if (preamble == 0x53 || preamble == 0x9A || preamble == 0xC6) {
                 lastL1sTime = millis();
                 // Store hex (スレッドセーフに保護して書き込み)
                 if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {

@@ -26,6 +26,9 @@ private:
     void handlePostSettings();
     void handlePostTest();
     void handlePostClear();
+    void handleGetUpdate();
+    void handlePostUpdate();
+    void setupOTA();
 };
 
 extern WebUIManager webUIManager;

@@ -11,6 +11,7 @@
 #include "AlertManager.h"
 #include "WebUIManager.h"
 #include <WiFi.h>
+#include <ArduinoOTA.h>
 
 // ハードウェアピン
 #define AUDIO_IN_PIN 4
@@ -293,6 +294,7 @@ void taskCore0(void *pvParameters) {
         }
 
         webUIManager.handleClient();
+        ArduinoOTA.handle();
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
