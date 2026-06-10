@@ -542,11 +542,9 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         }
         case 14: { // 海上
             bool hasAlertAdded = false;
-            // 仕様書に基づき、最大8個の警報ペア(Region 1〜8)をデコードする
-            for (int pairIdx = 0; pairIdx < 8; pairIdx++) {
-                // 仕様書 Table 4.1.2-51 に従い、Dw_1 はビット 53、Pl_1 はビット 58 から開始 (1ビットのズレを修正)
-                int dwOffset = 53 + pairIdx * 19;
-                int plOffset = 58 + pairIdx * 19;
+            for (int pairIdx = 0; pairIdx < 6; pairIdx++) {
+                int dwOffset = 54 + pairIdx * 19;
+                int plOffset = 59 + pairIdx * 19;
                 
                 uint32_t dw = getUbxBits(l1s_msg, dwOffset, 5); // Dw_x
                 uint32_t pl = getUbxBits(l1s_msg, plOffset, 14); // Pl_x
@@ -556,36 +554,23 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 }
                 
                 const char* dwName = getMarineWarningName(dw);
-                char dwNameBuf[32];
-                if (dwName) {
-                    strncpy(dwNameBuf, dwName, sizeof(dwNameBuf) - 1);
-                    dwNameBuf[sizeof(dwNameBuf) - 1] = '\0';
-                } else {
-                    snprintf(dwNameBuf, sizeof(dwNameBuf), "海上警報(コード:%d)", dw);
-                }
-
+                if (!dwName) dwName = "海上警報";
                 const char* plName = getMarineForecastName(pl);
-                char plNameBuf[64];
-                if (plName) {
-                    strncpy(plNameBuf, plName, sizeof(plNameBuf) - 1);
-                    plNameBuf[sizeof(plNameBuf) - 1] = '\0';
-                } else {
-                    snprintf(plNameBuf, sizeof(plNameBuf), "海域(コード:%d)", pl);
-                }
+                if (!plName) plName = "海域";
 
                 bool isOutOfRegionPair = false;
                 if (settings.myRegionCode != 0 && myPrefName) {
-                    if (!isPrefectureAffected(plNameBuf, myPrefName)) {
+                    if (!isPrefectureAffected(plName, myPrefName)) {
                         isOutOfRegionPair = true;
                     }
                 }
 
                 char localText[128];
                 if (dw == 0) {
-                    snprintf(localText, sizeof(localText), "海上警報解除(%s等)", plNameBuf);
+                    snprintf(localText, sizeof(localText), "海上警報解除(%s等)", plName);
                     alertManager.removeAlertsStartWith("海上");
                 } else {
-                    snprintf(localText, sizeof(localText), "%s(%s)", dwNameBuf, plNameBuf);
+                    snprintf(localText, sizeof(localText), "%s(%s)", dwName, plName);
                 }
 
                 alertManager.addAlert(localText, 60000, false, latitude, longitude, disasterCat, pl, 0, isOutOfRegionPair);
