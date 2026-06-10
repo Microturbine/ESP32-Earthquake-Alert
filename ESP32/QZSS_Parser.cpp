@@ -740,7 +740,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             }
 
             // Region filtering for J-Alert/L-Alert based on prefMask
-            if (settings.myRegionCode != 0 && prefMask != 0) {
+            if (settings.myRegionCode >= 1 && settings.myRegionCode <= 47 && prefMask != 0) {
                 uint64_t bitMask = 1ULL << (64 - settings.myRegionCode);
                 if ((prefMask & bitMask) == 0) {
                     isOutOfRegion = true;
