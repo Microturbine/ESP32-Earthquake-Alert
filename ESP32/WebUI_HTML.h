@@ -200,6 +200,41 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             box-shadow: 0 4px 20px var(--marine-glow);
         }
 
+        /* 海上警報アコーディオン用スタイル */
+        .marine-details {
+            width: 100%;
+        }
+        .marine-summary {
+            cursor: pointer;
+            outline: none;
+            user-select: none;
+            display: list-item;
+        }
+        .marine-summary::-webkit-details-marker {
+            color: var(--marine);
+        }
+        .alert-header-summary {
+            display: inline-flex;
+            width: calc(100% - 20px);
+            justify-content: space-between;
+            align-items: center;
+            vertical-align: middle;
+        }
+        .marine-group-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .marine-group-list::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 3px;
+        }
+        .marine-group-list::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.3);
+            border-radius: 3px;
+        }
+        .marine-group-list::-webkit-scrollbar-thumb:hover {
+            background: rgba(59, 130, 246, 0.5);
+        }
+
         .alert-card::before {
             content: '';
             position: absolute;
@@ -1053,6 +1088,9 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         <button class="btn btn-secondary" onclick="triggerMock('jalert')">模擬 Jアラート</button>
                         <button class="btn btn-secondary" onclick="triggerMock('lalert')">模擬 Lアラート</button>
                     </div>
+                    <div class="btn-grid" style="grid-template-columns: 1fr;">
+                        <button class="btn btn-secondary" onclick="triggerMock('marine')">模擬 海上警報(複数)</button>
+                    </div>
                     
                     <div class="form-group" style="margin-top:0.8rem;">
                         <label for="input-hex">みちびき生パケット(HEX32バイト)</label>
@@ -1611,42 +1649,96 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     if (alertsContainer.getAttribute('data-signature') !== currentAlertsSignature) {
                         alertsContainer.setAttribute('data-signature', currentAlertsSignature);
                         let html = '';
+                        let hasRenderedMarineGroup = false;
+                        const marineAlerts = data.alerts.filter(a => a.cat === 14);
+                        
                         data.alerts.forEach((alert, idx) => {
-                            const isTest = alert.isTest;
-                            const isOutOfRegion = alert.outOfRegion;
-                            const isCancel = alert.text.includes("解除") || alert.text.includes("取消") || alert.text.includes("終了");
-                            let cardClass = 'alert-card';
-                            let badgeText = '災害警報';
-                            
-                            if (isCancel) {
-                                cardClass = 'alert-card cancel-alert';
-                                badgeText = '解除/情報';
-                            } else if (isOutOfRegion) {
-                                cardClass = 'alert-card out-of-region';
-                                badgeText = '他地域・対象外';
-                            } else if (isTest) {
-                                cardClass = 'alert-card test-alert';
-                                badgeText = '訓練/試験';
-                            } else if (alert.cat === 14) {
-                                cardClass = 'alert-card marine-alert';
-                                badgeText = '海上警報';
-                            }
-                            
-                            html += `
-                                <div class="${cardClass}" id="alert-card-${idx}">
-                                    <div class="alert-header">
-                                        <span class="alert-type-badge">${badgeText}</span>
-                                        <span class="alert-expiry" id="alert-expiry-${idx}"></span>
+                            if (alert.cat === 14) {
+                                if (hasRenderedMarineGroup) {
+                                    return; // すでにグループ描画済みの場合はスキップ
+                                }
+                                hasRenderedMarineGroup = true;
+                                
+                                let cardClass = 'alert-card marine-alert';
+                                let badgeText = '海上警報';
+                                
+                                if (marineAlerts.length === 1) {
+                                    // 1件だけなら通常通り表示
+                                    html += `
+                                        <div class="${cardClass}" id="alert-card-${idx}">
+                                            <div class="alert-header">
+                                                <span class="alert-type-badge">${badgeText}</span>
+                                                <span class="alert-expiry" id="alert-expiry-${idx}"></span>
+                                            </div>
+                                            <div class="alert-body">${alert.text}</div>
+                                        </div>
+                                    `;
+                                } else {
+                                    // 複数ある場合はアコーディオン(details)で折りたたむ
+                                    html += `
+                                        <div class="${cardClass}" id="alert-card-${idx}">
+                                            <details open class="marine-details">
+                                                <summary class="marine-summary">
+                                                    <div class="alert-header-summary">
+                                                        <span class="alert-type-badge">${badgeText} (${marineAlerts.length}海域)</span>
+                                                        <span class="alert-expiry" id="alert-expiry-marine-group-header"></span>
+                                                    </div>
+                                                </summary>
+                                                <div class="marine-group-list" style="margin-top: 10px; max-height: 180px; overflow-y: auto; border-top: 1px solid rgba(255, 255, 255, 0.15); padding-top: 8px;">
+                                                    ${marineAlerts.map(ma => {
+                                                        const origIdx = data.alerts.findIndex(a => a.text === ma.text && a.cat === ma.cat);
+                                                        return `
+                                                            <div class="marine-sub-item" style="padding: 6px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; font-size: 0.9em; align-items: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(59,130,246,0.1)'" onmouseout="this.style.background='transparent'">
+                                                                <span class="marine-sub-text" style="color: var(--text-primary); text-shadow: 0 0 10px rgba(255,255,255,0.1);">${ma.text}</span>
+                                                                <span class="marine-sub-expiry alert-expiry" style="opacity: 0.85; font-size: 0.85em; white-space: nowrap; color: var(--marine);" id="alert-expiry-${origIdx}"></span>
+                                                            </div>
+                                                        `;
+                                                    }).join('')}
+                                                </div>
+                                            </details>
+                                        </div>
+                                    `;
+                                }
+                            } else {
+                                const isTest = alert.isTest;
+                                const isOutOfRegion = alert.outOfRegion;
+                                const isCancel = alert.text.includes("解除") || alert.text.includes("取消") || alert.text.includes("終了");
+                                let cardClass = 'alert-card';
+                                let badgeText = '災害警報';
+                                
+                                if (isCancel) {
+                                    cardClass = 'alert-card cancel-alert';
+                                    badgeText = '解除/情報';
+                                } else if (isOutOfRegion) {
+                                    cardClass = 'alert-card out-of-region';
+                                    badgeText = '他地域・対象外';
+                                } else if (isTest) {
+                                    cardClass = 'alert-card test-alert';
+                                    badgeText = '訓練/試験';
+                                }
+                                
+                                html += `
+                                    <div class="${cardClass}" id="alert-card-${idx}">
+                                        <div class="alert-header">
+                                            <span class="alert-type-badge">${badgeText}</span>
+                                            <span class="alert-expiry" id="alert-expiry-${idx}"></span>
+                                        </div>
+                                        <div class="alert-body">${alert.text}</div>
                                     </div>
-                                    <div class="alert-body">${alert.text}</div>
-                                </div>
-                            `;
+                                `;
+                            }
                         });
                         alertsContainer.innerHTML = html;
                     }
                     
                     // 有効期限の数値のみをインプレースで更新（アニメーションの再発火を防止）
+                    let maxMarineRemaining = 0;
                     data.alerts.forEach((alert, idx) => {
+                        if (alert.cat === 14) {
+                            if (alert.remaining > maxMarineRemaining) {
+                                maxMarineRemaining = alert.remaining;
+                            }
+                        }
                         const expiryEl = document.getElementById(`alert-expiry-${idx}`);
                         if (expiryEl) {
                             let expiryText = "";
@@ -1655,9 +1747,22 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                             } else if (alert.remaining === 0) {
                                 expiryText = "期限切れ間近";
                             }
-                            expiryEl.innerText = expiryText;
+                            
+                            // サブアイテム内の表示用に秒数表示のみにする
+                            const isSubItem = expiryEl.classList.contains('marine-sub-expiry');
+                            if (isSubItem) {
+                                expiryEl.innerText = alert.remaining > 0 ? `約${alert.remaining}秒` : "間近";
+                            } else {
+                                expiryEl.innerText = expiryText;
+                            }
                         }
                     });
+                    
+                    // 海上警報グループヘッダーの有効期限を更新
+                    const marineHeaderExpiryEl = document.getElementById('alert-expiry-marine-group-header');
+                    if (marineHeaderExpiryEl) {
+                        marineHeaderExpiryEl.innerText = maxMarineRemaining > 0 ? `有効期限: 約${maxMarineRemaining}秒` : "期限切れ間近";
+                    }
                 } else {
                     if (alertsContainer.getAttribute('data-signature') !== "standby") {
                         alertsContainer.setAttribute('data-signature', "standby");

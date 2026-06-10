@@ -542,7 +542,7 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
         }
         case 14: { // 海上
             bool hasAlertAdded = false;
-            for (int pairIdx = 0; pairIdx < 6; pairIdx++) {
+            for (int pairIdx = 0; pairIdx < 8; pairIdx++) {
                 int dwOffset = 54 + pairIdx * 19;
                 int plOffset = 59 + pairIdx * 19;
                 
@@ -554,9 +554,17 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
                 }
                 
                 const char* dwName = getMarineWarningName(dw);
-                if (!dwName) dwName = "海上警報";
+                char dwNameBuf[32];
+                if (!dwName) {
+                    snprintf(dwNameBuf, sizeof(dwNameBuf), "海上警報(コード:%d)", dw);
+                    dwName = dwNameBuf;
+                }
                 const char* plName = getMarineForecastName(pl);
-                if (!plName) plName = "海域";
+                char plNameBuf[64];
+                if (!plName) {
+                    snprintf(plNameBuf, sizeof(plNameBuf), "海域(コード:%d)", pl);
+                    plName = plNameBuf;
+                }
 
                 bool isOutOfRegionPair = false;
                 if (settings.myRegionCode != 0 && myPrefName) {
@@ -676,7 +684,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                     int count = 0;
                     areaStr[0] = '\0';
                     for (int i = 1; i <= 47; i++) {
-                        uint64_t bitMask = (uint64_t)1 << (64 - i);
+                        uint64_t bitMask = 1ULL << (64 - i);
                         if (ex9 & bitMask) {
                             const char* prefName = getPrefectureJisName(i);
                             if (prefName) {
@@ -699,7 +707,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                         if (cityCode > 0) {
                             uint32_t prefId = cityCode / 1000;
                             if (prefId >= 1 && prefId <= 47) {
-                                prefMask |= ((uint64_t)1 << (64 - prefId));
+                                prefMask |= (1ULL << (64 - prefId));
                             }
                             const char* prefName = getPrefectureJisName(prefId);
                             if (prefName) {
@@ -720,7 +728,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 if (ex1 > 0) {
                     uint32_t prefId = ex1 / 1000;
                     if (prefId >= 1 && prefId <= 47) {
-                        prefMask |= ((uint64_t)1 << (64 - prefId));
+                        prefMask |= (1ULL << (64 - prefId));
                     }
                     const char* prefName = getPrefectureJisName(prefId);
                     if (prefName) {
@@ -733,7 +741,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
 
             // Region filtering for J-Alert/L-Alert based on prefMask
             if (settings.myRegionCode != 0 && prefMask != 0) {
-                uint64_t bitMask = (uint64_t)1 << (64 - settings.myRegionCode);
+                uint64_t bitMask = 1ULL << (64 - settings.myRegionCode);
                 if ((prefMask & bitMask) == 0) {
                     isOutOfRegion = true;
                     Serial.printf("[QZSS] 地域フィルタ: 自地域コード %d が prefMask %08x%08x に含まれないため、警告LEDを無効にします\n",

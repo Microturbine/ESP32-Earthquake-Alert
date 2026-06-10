@@ -340,6 +340,13 @@ void WebUIManager::handlePostTest() {
             alertManager.addAlert("【模擬】避難指示：大雨特別警報に伴う土砂災害の危険が高まりました。直ちに避難所等の安全な場所に避難してください。", 120000, false, 35.689, 139.692, 44, 76, 0x0008000000000000ULL, false, 10.0, 5.0, 45.0);
             server.send(200, "text/plain", "OK");
         } 
+        else if (type == "marine") {
+            Serial.println("[WebUI] 模擬海上警報テスト発報");
+            alertManager.addAlert("【模擬】海上警報：三陸沖西部で海上暴風警報が発表されました。警戒してください。", 120000, false, 0.0, 0.0, 14, 2020);
+            alertManager.addAlert("【模擬】海上警報：その他の地方海上予報区で海上強風警報が発表されました。注意してください。", 120000, false, 0.0, 0.0, 14, 10000);
+            alertManager.addAlert("【模擬】海上警報：北海道東方海上で海上強風警報が発表されました。注意してください。", 120000, false, 0.0, 0.0, 14, 1110);
+            server.send(200, "text/plain", "OK");
+        }
         else if (type == "hex" && server.hasArg("hex")) {
             String hex = server.arg("hex");
             hex.trim();
