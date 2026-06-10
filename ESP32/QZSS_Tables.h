@@ -26,5 +26,7 @@ const char* getMarineWarningName(uint32_t code);
 const char* getMarineForecastName(uint32_t code);
 const char* getDcxHazardName(uint32_t code);
 const char* getDcxGuidanceTextName(uint32_t code);
+String getDcxGuidanceText(uint32_t a11Code);
+double getDcxEllipseRadius(uint32_t code);
 
 #endif // QZSS_TABLES_H

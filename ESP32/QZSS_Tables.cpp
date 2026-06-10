@@ -771,3 +771,61 @@ const char* getDcxHazardName(uint32_t code) {
 const char* getDcxGuidanceTextName(uint32_t code) {
     return lookupQzssName(code, DCX_GUIDANCE_TEXT_TABLE, sizeof(DCX_GUIDANCE_TEXT_TABLE) / sizeof(QzssCodeMap));
 }
+
+double getDcxEllipseRadius(uint32_t code) {
+    static const double DCX_RADIUS_TABLE[] = {
+        0.216, 0.292, 0.395, 0.535, 0.723, 0.978, 1.322, 1.788,
+        2.418, 3.269, 4.421, 5.979, 8.085, 10.933, 14.784, 19.992,
+        27.035, 36.559, 49.439, 66.855, 90.407, 122.255, 165.324, 223.564,
+        302.322, 408.824, 552.846, 747.603, 1010.970, 1367.116, 1848.727, 2500.000
+    };
+    if (code < 32) {
+        return DCX_RADIUS_TABLE[code];
+    }
+    return 0.0;
+}
+
+String getDcxGuidanceText(uint32_t a11Code) {
+    uint32_t basic = (a11Code >> 8) & 0x03;
+    uint32_t info = a11Code & 0xFF;
+    
+    if (basic == 0) {
+        switch (info) {
+            case 0: return "";
+            case 1: return "直ちに命を守るための最善の行動を。";
+            case 126: return "これは、DCXのテストメッセージです。";
+            case 127: return "直ちに命を守るための最善の行動を。";
+            case 128: return "ミサイル発射。ミサイルが発射されたものとみられます。建物の中、又は地下に避難して下さい。";
+            case 129: return "ミサイル通過。先程のミサイルは通過したものとみられます。避難の呼びかけを解除します。不審なものには決して近寄らず直ちに警察や消防などに連絡して下さい。";
+            case 130: return "先程のミサイルは、海に落下したものとみられます。避難の呼びかけを解除します。不審なものには決して近寄らず直ちに警察や消防などに連絡して下さい。";
+            case 131: return "先程のミサイルは、我が国には飛来しないものとみられます。避難の呼びかけを解除します。";
+            case 132: return "直ちに避難。直ちに避難。直ちに建物の中、又は地下に避難して下さい。ミサイルが、周辺に落下するものとみられます。直ちに避難して下さい。";
+            case 133: return "先程のミサイルは、迎撃により破壊されました。ミサイルの破片の落下の可能性があります。続報を伝達しますので、引き続き屋内に避難して下さい。";
+            case 134: return "ミサイル落下。ミサイルが、周辺に落下したものとみられます。続報を伝達しますので、引き続き屋内に避難して下さい。";
+            case 135: return "先程のミサイルは、我が国には落下しないものとみられます。避難の呼びかけを解除します。";
+            case 136: return "これは、Jアラートのテストです。";
+        }
+    }
+    
+    String basicStr = "";
+    if (basic == 1) basicStr = "留まれ。";
+    else if (basic == 2) basicStr = "向かえ。";
+    else if (basic == 3) basicStr = "離れろ。";
+    
+    String infoStr = "";
+    switch (info) {
+        case 1: infoStr = "頑丈なものの下/中。"; break;
+        case 2: infoStr = "3階以上。"; break;
+        case 3: infoStr = "地下。"; break;
+        case 4: infoStr = "山。"; break;
+        case 5: infoStr = "水場。"; break;
+        case 6: infoStr = "工場等化学系を取扱う建物。"; break;
+        case 7: infoStr = "崖等崩れやすい場所。"; break;
+    }
+    
+    if (info == 127 || info == 255) {
+        return "直ちに命を守るための最善の行動を。";
+    }
+    
+    return basicStr + infoStr;
+}

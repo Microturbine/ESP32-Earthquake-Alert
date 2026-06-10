@@ -29,7 +29,7 @@ LGFX::LGFX(void) {
     {
       auto cfg = _light_instance.config();
       cfg.pin_bl = 21;
-      cfg.invert = true;
+      cfg.invert = false;
       cfg.freq   = 2000;
       cfg.pwm_channel = 7;
       _light_instance.config(cfg);
@@ -87,7 +87,8 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
     canvas->drawFastHLine(0, 20, 284, TFT_DARKGREY);
 
     if (alertActive || testActive) {
-      Alert activeAlerts[AlertManager::MAX_ALERTS];
+      // 巨大な一時コピー用配列をヒープに逃がしてスタックオーバーフローを防止
+      Alert* activeAlerts = new Alert[AlertManager::MAX_ALERTS];
       int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
       
       bool allCancelled = (count > 0);
@@ -123,6 +124,9 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
               y += 13;
           }
       }
+      
+      // メモリ解放
+      delete[] activeAlerts;
     } else {
       // 2行目: RSSIと音量
       canvas->setCursor(5, 25);
@@ -143,7 +147,8 @@ void DisplayManager::update(int freq, int rssi, int vol, int svCount, const char
       
       canvas->setCursor(160, 42);
       canvas->setTextColor(TFT_GREEN);
-      canvas->printf("IP:%s", webUIManager.getIPAddress().c_str());
+      String ipStr = webUIManager.getIPAddress();
+      canvas->printf("IP:%s", ipStr.c_str());
       
       // 4行目: ステータス
       canvas->fillRect(0, 58, 284, 18, (ewsState == 1) ? TFT_RED : 0x2104);
