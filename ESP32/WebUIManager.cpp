@@ -20,14 +20,21 @@ WebUIManager::WebUIManager() : server(80), apMode(false), localIP("0.0.0.0"), ac
 void WebUIManager::init() {
     Serial.println("\n--- WiFi初期化 ---");
     
+    // 自動保存を無効化し、以前の接続状態を完全にクリーンアップしてハードウェアをリセット
+    WiFi.persistent(false);
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_OFF);
+    delay(100);
+    
     if (settings.wifiSSID.length() > 0) {
         Serial.printf("WiFi 接続試行中... SSID: %s\n", settings.wifiSSID.c_str());
-        WiFi.mode(WIFI_AP_STA); // APも有効化できるように設定
+        // 最初からSTAモードで開始
+        WiFi.mode(WIFI_STA);
         WiFi.begin(settings.wifiSSID.c_str(), settings.wifiPassword.c_str());
         
         int attempts = 0;
-        // 最大10秒待機 (100ms * 100)
-        while (WiFi.status() != WL_CONNECTED && attempts < 100) {
+        // 最大15秒待機 (100ms * 150)
+        while (WiFi.status() != WL_CONNECTED && attempts < 150) {
             delay(100);
             attempts++;
             if (attempts % 10 == 0) {
@@ -41,9 +48,7 @@ void WebUIManager::init() {
             localIP = WiFi.localIP().toString();
             activeSSID = settings.wifiSSID;
             Serial.printf("WiFi 接続成功! IP: %s\n", localIP.c_str());
-            
-            // 無駄な電波出力を防ぐためSTAモードのみにする
-            WiFi.mode(WIFI_STA);
+            // すでにWIFI_STAモードで動作しているため、不要なWiFi.mode()設定は行いません
         } else {
             Serial.println("WiFi 接続タイムアウト。APモードに切り替えます。");
             apMode = true;
@@ -54,6 +59,7 @@ void WebUIManager::init() {
     }
     
     if (apMode) {
+        WiFi.disconnect(true); // STA接続設定をリセット
         WiFi.mode(WIFI_AP);
         String apName = "ESP32-Alert-Decoder";
         WiFi.softAP(apName.c_str(), "");
@@ -130,12 +136,12 @@ static String escapeJsonString(const String& input) {
 }
 
 void WebUIManager::handleGetStatus() {
-    // 警報リストのコピー
-    Alert activeAlerts[AlertManager::MAX_ALERTS];
+    // 警報リストのコピー (ヒープ上に動的確保してスタックオーバーフローを防止)
+    Alert* activeAlerts = new Alert[AlertManager::MAX_ALERTS];
     int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
     
-    // 警報履歴のコピー
-    HistoryAlert histAlerts[AlertManager::MAX_HISTORY];
+    // 警報履歴のコピー (ヒープ上に動的確保してスタックオーバーフローを防止)
+    HistoryAlert* histAlerts = new HistoryAlert[AlertManager::MAX_HISTORY];
     int histCount = alertManager.copyHistory(histAlerts, AlertManager::MAX_HISTORY);
     
     String json;
@@ -171,9 +177,9 @@ void WebUIManager::handleGetStatus() {
         uint32_t prefMaskLow = (uint32_t)(activeAlerts[i].prefMask & 0xFFFFFFFFULL);
         snprintf(maskStr, sizeof(maskStr), "\"%08x%08x\"", prefMaskHigh, prefMaskLow);
         
-        char alertBuf[512];
+        char alertBuf[600];
         snprintf(alertBuf, sizeof(alertBuf), 
-                 "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s,\"outOfRegion\":%s}",
+                 "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s,\"outOfRegion\":%s,\"elMajor\":%.3f,\"elMinor\":%.3f,\"elAzimuth\":%.2f}",
                  escapedText.c_str(),
                  remainingSec,
                  activeAlerts[i].isTest ? "true" : "false",
@@ -182,7 +188,10 @@ void WebUIManager::handleGetStatus() {
                  activeAlerts[i].disasterCat,
                  activeAlerts[i].code,
                  maskStr,
-                 activeAlerts[i].isOutOfRegion ? "true" : "false");
+                 activeAlerts[i].isOutOfRegion ? "true" : "false",
+                 activeAlerts[i].ellipseMajor,
+                 activeAlerts[i].ellipseMinor,
+                 activeAlerts[i].ellipseAzimuth);
                  
         json += alertBuf;
         if (i < count - 1) {
@@ -228,9 +237,13 @@ void WebUIManager::handleGetStatus() {
     json += "}";
     
     // シリアルモニタへのデバッグ出力（JSON内容確認用）
-    Serial.println("\n--- [WebUI Status JSON Send] ---");
-    Serial.println(json);
-    Serial.println("--------------------------------\n");
+    // Serial.println("\n--- [WebUI Status JSON Send] ---");
+    // Serial.println(json);
+    // Serial.println("--------------------------------\n");
+    
+    // 動的メモリの解放
+    delete[] activeAlerts;
+    delete[] histAlerts;
     
     server.send(200, "application/json", json);
 }
@@ -319,6 +332,12 @@ void WebUIManager::handlePostTest() {
         else if (type == "jalert") {
             Serial.println("[WebUI] 模擬Jアラートテスト発報");
             alertManager.addAlert("【模擬】ミサイル発射：北朝鮮方面からミサイルが発射された模様。頑丈な建物や地下に避難してください。", 120000, false, 0.0, 0.0, 44, 1, 0xC000000000000000ULL);
+            server.send(200, "text/plain", "OK");
+        } 
+        else if (type == "lalert") {
+            Serial.println("[WebUI] 模擬Lアラート避難指示テスト発報");
+            // 避難指示：都庁付近（長半径 10km, 短半径 5km, 方位角 45度, 東京 prefMask=0x0008000000000000ULL）
+            alertManager.addAlert("【模擬】避難指示：大雨特別警報に伴う土砂災害の危険が高まりました。直ちに避難所等の安全な場所に避難してください。", 120000, false, 35.689, 139.692, 44, 76, 0x0008000000000000ULL, false, 10.0, 5.0, 45.0);
             server.send(200, "text/plain", "OK");
         } 
         else if (type == "hex" && server.hasArg("hex")) {

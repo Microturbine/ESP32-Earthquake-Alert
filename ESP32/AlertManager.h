@@ -6,7 +6,7 @@
 #include <freertos/semphr.h>
 
 struct Alert {
-    char text[128];
+    char text[256];
     uint32_t expiry;
     bool isTest;
     double latitude;   // 0.0 means invalid/none
@@ -15,10 +15,13 @@ struct Alert {
     int code;          // Region/Epicenter/Volcano code
     uint64_t prefMask; // Affected prefectures bitmask (for MT44 etc)
     bool isOutOfRegion;
+    double ellipseMajor;   // in km (0.0 means none)
+    double ellipseMinor;   // in km
+    double ellipseAzimuth; // in degrees (-90 to 90)
 };
 
 struct HistoryAlert {
-    char text[128];
+    char text[256];
     bool isTest;
     bool isOutOfRegion;
     uint32_t receivedMillis;
@@ -33,7 +36,8 @@ public:
     bool addAlert(const char* text, uint32_t timeoutMs, bool isTest,
                   double latitude = 0.0, double longitude = 0.0,
                   int disasterCat = 0, int code = 0, uint64_t prefMask = 0,
-                  bool isOutOfRegion = false);
+                  bool isOutOfRegion = false,
+                  double ellipseMajor = 0.0, double ellipseMinor = 0.0, double ellipseAzimuth = 0.0);
     
     // 指定した文字列から始まる警報を削除する
     void removeAlertsStartWith(const char* prefix);

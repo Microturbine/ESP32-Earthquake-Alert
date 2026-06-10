@@ -35,7 +35,7 @@ private:
 
     int qzssState;
     uint32_t qzssTimeout;
-    char alertText[128];
+    char alertText[256];
     char lastL1sHex[65];
     
     SemaphoreHandle_t qzssMutex;

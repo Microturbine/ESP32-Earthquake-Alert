@@ -13,7 +13,8 @@ AlertManager::AlertManager() {
 }
 
 bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
-                            double latitude, double longitude, int disasterCat, int code, uint64_t prefMask, bool isOutOfRegion) {
+                            double latitude, double longitude, int disasterCat, int code, uint64_t prefMask, bool isOutOfRegion,
+                            double ellipseMajor, double ellipseMinor, double ellipseAzimuth) {
     bool added = false;
     if (xSemaphoreTake(mutex, portMAX_DELAY)) {
         uint32_t now = millis();
@@ -53,6 +54,9 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
                 alerts[i].code = code;
                 alerts[i].prefMask = prefMask;
                 alerts[i].isOutOfRegion = isOutOfRegion;
+                alerts[i].ellipseMajor = ellipseMajor;
+                alerts[i].ellipseMinor = ellipseMinor;
+                alerts[i].ellipseAzimuth = ellipseAzimuth;
                 found = true;
                 break;
             }
@@ -86,6 +90,9 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
             alerts[alertCount].code = code;
             alerts[alertCount].prefMask = prefMask;
             alerts[alertCount].isOutOfRegion = isOutOfRegion;
+            alerts[alertCount].ellipseMajor = ellipseMajor;
+            alerts[alertCount].ellipseMinor = ellipseMinor;
+            alerts[alertCount].ellipseAzimuth = ellipseAzimuth;
             alertCount++;
             added = true;
             newAlertFlag = true;

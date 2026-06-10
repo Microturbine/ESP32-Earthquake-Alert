@@ -34,6 +34,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             --success: #10b981;
             --success-glow: rgba(16, 185, 129, 0.2);
             --info: #06b6d4;
+            --marine: #3b82f6;
+            --marine-glow: rgba(59, 130, 246, 0.4);
         }
 
         * {
@@ -46,8 +48,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             font-family: 'Plus Jakarta Sans', 'Noto Sans JP', sans-serif;
             background-color: var(--bg-primary);
             background-image: 
-                radial-gradient(at 10% 20%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
-                radial-gradient(at 90% 80%, rgba(236, 72, 153, 0.1) 0px, transparent 50%);
+            radial-gradient(at 10% 20%, rgba(139, 92, 246, 0.15) 0px, transparent 50%),
+            radial-gradient(at 90% 80%, rgba(236, 72, 153, 0.1) 0px, transparent 50%);
             background-attachment: fixed;
             color: var(--text-primary);
             min-height: 100vh;
@@ -192,6 +194,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             box-shadow: none;
         }
 
+        .alert-card.marine-alert {
+            border-color: var(--marine);
+            background: rgba(59, 130, 246, 0.06);
+            box-shadow: 0 4px 20px var(--marine-glow);
+        }
+
         .alert-card::before {
             content: '';
             position: absolute;
@@ -212,6 +220,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
         .alert-card.out-of-region::before {
             background: var(--text-secondary);
+        }
+
+        .alert-card.marine-alert::before {
+            background: var(--marine);
         }
 
         .alert-header {
@@ -242,6 +254,10 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
         .alert-card.out-of-region .alert-type-badge {
             background: var(--text-secondary);
+        }
+
+        .alert-card.marine-alert .alert-type-badge {
+            background: var(--marine);
         }
 
         .alert-expiry {
@@ -1034,7 +1050,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         <button class="btn btn-secondary btn-danger" onclick="triggerMock('tsunami')">模擬津波</button>
                     </div>
                     <div class="btn-grid">
-                        <button class="btn btn-secondary" style="grid-column: span 2;" onclick="triggerMock('jalert')">模擬 Jアラート (国民保護)</button>
+                        <button class="btn btn-secondary" onclick="triggerMock('jalert')">模擬 Jアラート</button>
+                        <button class="btn btn-secondary" onclick="triggerMock('lalert')">模擬 Lアラート</button>
                     </div>
                     
                     <div class="form-group" style="margin-top:0.8rem;">
@@ -1093,6 +1110,24 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
     </div>
 
     <script>
+        function getEllipsePolygon(lat, lon, semiMajorKm, semiMinorKm, azimuthDeg, numPoints = 64) {
+            const coords = [];
+            const R = 6378.137; // 地球の半径 (km)
+            const azimuthRad = (azimuthDeg * Math.PI) / 180;
+            for (let i = 0; i < numPoints; i++) {
+                const phi = (i * 2 * Math.PI) / numPoints;
+                const x_local = semiMajorKm * Math.cos(phi);
+                const y_local = semiMinorKm * Math.sin(phi);
+                // 角度（時計回り）で回転
+                const y_rot = x_local * Math.cos(azimuthRad) - y_local * Math.sin(azimuthRad);
+                const x_rot = x_local * Math.sin(azimuthRad) + y_local * Math.cos(azimuthRad);
+                const dLat = (y_rot / R) * (180 / Math.PI);
+                const dLon = (x_rot / (R * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI);
+                coords.push([lat + dLat, lon + dLon]);
+            }
+            return coords;
+        }
+
         let isAPMode = false;
         let lastIp = "";
         let currentMute = false;
@@ -1162,6 +1197,58 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
             300: { lat: 35.0, lon: 139.5 },
             310: { lat: 34.5, lon: 138.8 },
             320: { lat: 34.0, lon: 137.5 }
+        };
+
+        const MARINE_REGION_COORDINATES = {
+            1000: { lat: 45.0, lon: 141.0, radius: 200000 }, // 日本海北部オホーツク南部
+            1010: { lat: 48.0, lon: 145.0, radius: 150000 }, // サハリン東方海上
+            1020: { lat: 48.0, lon: 141.0, radius: 150000 }, // サハリン西方海上
+            1030: { lat: 44.5, lon: 144.5, radius: 80000 }, // 網走沖
+            1040: { lat: 45.8, lon: 142.0, radius: 50000 }, // 宗谷海峡
+            1050: { lat: 43.5, lon: 140.0, radius: 100000 }, // 北海道西方海上
+            1100: { lat: 41.5, lon: 145.0, radius: 150000 }, // 北海道南方東方海上
+            1110: { lat: 43.0, lon: 147.0, radius: 150000 }, // 北海道東方海上
+            1120: { lat: 42.5, lon: 144.0, radius: 80000 }, // 釧路沖
+            1130: { lat: 41.8, lon: 142.5, radius: 60000 }, // 日高沖
+            1140: { lat: 41.5, lon: 140.7, radius: 40000 }, // 津軽海峡
+            1150: { lat: 41.5, lon: 139.5, radius: 60000 }, // 檜山津軽沖
+            2000: { lat: 39.0, lon: 143.0, radius: 150000 }, // 三陸沖
+            2010: { lat: 39.0, lon: 145.0, radius: 120000 }, // 三陸沖東部
+            2020: { lat: 39.5, lon: 142.5, radius: 80000 }, // 三陸沖西部
+            3000: { lat: 34.5, lon: 141.0, radius: 150000 }, // 関東海域
+            3010: { lat: 35.5, lon: 141.5, radius: 80000 }, // 関東海域北部
+            3020: { lat: 33.5, lon: 140.5, radius: 100000 }, // 関東海域南部
+            3100: { lat: 40.0, lon: 135.0, radius: 250000 }, // 日本海中部
+            3110: { lat: 41.0, lon: 132.0, radius: 120000 }, // 沿海州南部沖
+            3120: { lat: 40.0, lon: 139.0, radius: 80000 }, // 秋田沖
+            3130: { lat: 38.3, lon: 137.5, radius: 80000 }, // 佐渡沖
+            3140: { lat: 37.8, lon: 136.5, radius: 60000 }, // 能登沖
+            3200: { lat: 33.5, lon: 137.5, radius: 150000 }, // 東海海域
+            3210: { lat: 34.0, lon: 138.5, radius: 80000 }, // 東海海域東部
+            3220: { lat: 33.5, lon: 137.0, radius: 80000 }, // 東海海域西部
+            3230: { lat: 31.5, lon: 137.5, radius: 120000 }, // 東海海域南部
+            4000: { lat: 32.5, lon: 134.0, radius: 150000 }, // 四国沖瀬戸内海
+            4010: { lat: 34.3, lon: 133.5, radius: 80000 }, // 瀬戸内海
+            4020: { lat: 32.5, lon: 133.5, radius: 80000 }, // 四国沖北部
+            4030: { lat: 30.5, lon: 133.5, radius: 120000 }, // 四国沖南部
+            4100: { lat: 36.5, lon: 131.0, radius: 150000 }, // 日本海西部
+            4110: { lat: 38.0, lon: 131.0, radius: 120000 }, // 日本海北西部
+            4120: { lat: 36.3, lon: 135.0, radius: 100000 }, // 山陰沖東部若狭湾付近
+            4130: { lat: 35.8, lon: 132.0, radius: 80000 }, // 山陰沖西部
+            5000: { lat: 34.0, lon: 129.5, radius: 60000 }, // 対馬海峡
+            5100: { lat: 32.0, lon: 128.0, radius: 120000 }, // 九州西方海上
+            5110: { lat: 33.5, lon: 125.0, radius: 100000 }, // 済州島西海上
+            5120: { lat: 32.5, lon: 128.5, radius: 80000 }, // 長崎西海上
+            5130: { lat: 31.0, lon: 127.0, radius: 100000 }, // 女島南西海上
+            5200: { lat: 31.0, lon: 132.0, radius: 150000 }, // 九州南方海上・日向灘
+            5210: { lat: 32.0, lon: 132.0, radius: 80000 }, // 日向灘
+            5220: { lat: 30.5, lon: 130.5, radius: 80000 }, // 鹿児島海域
+            5230: { lat: 28.5, lon: 129.5, radius: 100000 }, // 奄美海域
+            6000: { lat: 26.0, lon: 126.0, radius: 150000 }, // 沖縄海域
+            6010: { lat: 27.0, lon: 124.0, radius: 120000 }, // 東シナ海南部
+            6020: { lat: 26.0, lon: 129.0, radius: 120000 }, // 沖縄東方海上
+            6030: { lat: 24.0, lon: 126.0, radius: 120000 }, // 沖縄南方海上
+            10000: { lat: 35.0, lon: 145.0, radius: 150000 } // その他海域
         };
 
         const VOLCANO_COORDINATES = {
@@ -1252,7 +1339,11 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 let color = '#ef4444';
 
                 if (isExact) {
-                    locations.push({ lat: lat, lon: lon, color: '#ef4444', label: '震源地' });
+                    if (alert.elMajor && alert.elMajor > 0) {
+                        locations.push({ lat: lat, lon: lon, color: '#ef4444', label: '災害地域(中心)', isEllipse: true });
+                    } else {
+                        locations.push({ lat: lat, lon: lon, color: '#ef4444', label: '震源地' });
+                    }
                 } else {
                     if (alert.cat === 1) { // EEW
                         let approx = getApproxEpicenterCoords(alert.code);
@@ -1267,6 +1358,9 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     } else if (alert.cat === 5 || alert.cat === 6) { // 津波
                         const coords = TSUNAMI_REGION_COORDINATES[alert.code] || { lat: 36.0, lon: 140.0 };
                         locations.push({ lat: coords.lat, lon: coords.lon, color: '#06b6d4', label: '津波対象地域' });
+                    } else if (alert.cat === 14) { // 海上警報
+                        const coords = MARINE_REGION_COORDINATES[alert.code] || { lat: 35.0, lon: 143.0 };
+                        locations.push({ lat: coords.lat, lon: coords.lon, color: '#3b82f6', label: '対象海域', radius: coords.radius });
                     } else if (alert.cat === 8 || alert.cat === 9) { // 火山
                         const coords = VOLCANO_COORDINATES[alert.code] || { lat: 35.36, lon: 138.73 };
                         locations.push({ lat: coords.lat, lon: coords.lon, color: '#ec4899', label: '火山' });
@@ -1288,14 +1382,27 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
 
                 locations.forEach(loc => {
                     if (leafletLoaded && map) {
-                        const markerCircle = L.circle([loc.lat, loc.lon], {
-                            color: loc.color,
-                            fillColor: loc.color,
-                            fillOpacity: 0.35,
-                            radius: alert.cat === 44 ? 30000 : 50000
-                        }).addTo(map);
-                        markerCircle.bindPopup(`<b>${alert.text}</b>`);
-                        mapMarkers.push(markerCircle);
+                        if (loc.isEllipse) {
+                            const coords = getEllipsePolygon(loc.lat, loc.lon, alert.elMajor, alert.elMinor, alert.elAzimuth);
+                            const markerPolygon = L.polygon(coords, {
+                                color: loc.color,
+                                fillColor: loc.color,
+                                fillOpacity: 0.2,
+                                weight: 2
+                            }).addTo(map);
+                            markerPolygon.bindPopup(`<b>${alert.text}</b>`);
+                            mapMarkers.push(markerPolygon);
+                        } else {
+                            const radius = loc.radius || (alert.cat === 44 ? 30000 : 50000);
+                            const markerCircle = L.circle([loc.lat, loc.lon], {
+                                color: loc.color,
+                                fillColor: loc.color,
+                                fillOpacity: 0.35,
+                                radius: radius
+                            }).addTo(map);
+                            markerCircle.bindPopup(`<b>${alert.text}</b>`);
+                            mapMarkers.push(markerCircle);
+                        }
                     }
                     
                     if (svgGroup) {
@@ -1306,14 +1413,24 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                             const pulseElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                             pulseElement.setAttribute('cx', x);
                             pulseElement.setAttribute('cy', y);
-                            pulseElement.setAttribute('r', alert.cat === 5 ? '0.4' : '0.6');
+                            
+                            let rVal = 0.6;
+                            if (loc.isEllipse) {
+                                rVal = Math.min(Math.max(alert.elMajor / 111.0, 0.2), 3.0);
+                            } else if (loc.radius) {
+                                rVal = loc.radius / 111000.0;
+                            } else if (alert.cat === 5) {
+                                rVal = 0.4;
+                            }
+                            
+                            pulseElement.setAttribute('r', rVal);
                             pulseElement.setAttribute('fill', hexToRgba(loc.color, 0.4));
                             pulseElement.setAttribute('stroke', loc.color);
                             pulseElement.setAttribute('stroke-width', '0.08');
                             
                             const animateR = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
                             animateR.setAttribute('attributeName', 'r');
-                            animateR.setAttribute('values', '0.1;0.8;0.1');
+                            animateR.setAttribute('values', `${rVal * 0.2};${rVal * 1.3};${rVal * 0.2}`);
                             animateR.setAttribute('dur', '2s');
                             animateR.setAttribute('repeatCount', 'indefinite');
                             pulseElement.appendChild(animateR);
@@ -1490,7 +1607,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 // 警報表示の更新
                 const alertsContainer = document.getElementById('alerts-container');
                 if (data.alerts && data.alerts.length > 0) {
-                    const currentAlertsSignature = data.alerts.map(a => a.text + "|" + a.isTest + "|" + a.outOfRegion).join("||");
+                    const currentAlertsSignature = data.alerts.map(a => a.text + "|" + a.isTest + "|" + a.outOfRegion + "|" + a.cat).join("||");
                     if (alertsContainer.getAttribute('data-signature') !== currentAlertsSignature) {
                         alertsContainer.setAttribute('data-signature', currentAlertsSignature);
                         let html = '';
@@ -1510,6 +1627,9 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                             } else if (isTest) {
                                 cardClass = 'alert-card test-alert';
                                 badgeText = '訓練/試験';
+                            } else if (alert.cat === 14) {
+                                cardClass = 'alert-card marine-alert';
+                                badgeText = '海上警報';
                             }
                             
                             html += `

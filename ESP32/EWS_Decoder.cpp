@@ -123,7 +123,7 @@ void EwsDecoder::init(int i2c_sda, int i2c_scl, int audio_pin) {
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY)) {
         rx.setup();
         rx.setBand(1);
-        rx.setMute(true); // スタンバイ時の砂嵐音を防ぐため消音（ミュート）で起動
+        rx.setMute(true); // ミュートで起動
         rx.setMono(true);
         xSemaphoreGive(i2cMutex);
     }

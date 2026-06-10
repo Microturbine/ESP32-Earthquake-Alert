@@ -272,11 +272,21 @@ void taskCore0(void *pvParameters) {
 
         // WiFi 自動再接続チェック (30秒おき)
         if (!webUIManager.isAPMode() && settings.wifiSSID.length() > 0) {
+            // 初回ループ時に lastWiFiCheck を現在の時刻で初期化
+            static bool wifiCheckInitialized = false;
+            if (!wifiCheckInitialized) {
+                lastWiFiCheck = now;
+                wifiCheckInitialized = true;
+            }
+
             if (now - lastWiFiCheck > 30000) {
                 lastWiFiCheck = now;
-                if (WiFi.status() != WL_CONNECTED) {
-                    Serial.println("[WiFi] 接続が切断されています。再接続を試みます...");
+                wl_status_t status = WiFi.status();
+                // 完全に切断されている場合のみ再接続を試みる（接続中の状態遷移時などの競合を防ぐ）
+                if (status == WL_CONNECTION_LOST || status == WL_DISCONNECTED) {
+                    Serial.println("[WiFi] 接続が完全に切断されています。再接続を試みます...");
                     WiFi.disconnect();
+                    delay(100);
                     WiFi.begin(settings.wifiSSID.c_str(), settings.wifiPassword.c_str());
                 }
             }

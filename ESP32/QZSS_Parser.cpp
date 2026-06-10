@@ -453,21 +453,49 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             break;
         }
         case 10: { // 気象
-            uint32_t ww = getUbxBits(l1s_msg, 57, 5); // Ww_1
-            uint32_t pl = getUbxBits(l1s_msg, 62, 19); // Pl_1
-            const char* wwName = getWeatherSubCatName(ww);
-            if (!wwName) wwName = "気象特別警報";
-            const char* plName = getPrefecturalForecastName(pl);
-            if (!plName) plName = "一部地域";
-            
-            if (settings.myRegionCode != 0 && myPrefName) {
-                if (!isPrefectureAffected(plName, myPrefName)) {
-                    isOutOfRegion = true;
+            bool hasAlertAdded = false;
+            for (int pairIdx = 0; pairIdx < 5; pairIdx++) {
+                int wwOffset = 57 + pairIdx * 24;
+                int plOffset = 62 + pairIdx * 24;
+                
+                uint32_t ww = getUbxBits(l1s_msg, wwOffset, 5);
+                uint32_t pl = getUbxBits(l1s_msg, plOffset, 19);
+                
+                if (ww == 0 && pl == 0) {
+                    continue; // 未使用スロット
+                }
+                
+                const char* wwName = getWeatherSubCatName(ww);
+                if (!wwName) wwName = "気象特別警報";
+                const char* plName = getPrefecturalForecastName(pl);
+                if (!plName) plName = "一部地域";
+                
+                bool isOutOfRegionPair = false;
+                if (settings.myRegionCode != 0 && myPrefName) {
+                    if (!isPrefectureAffected(plName, myPrefName)) {
+                        isOutOfRegionPair = true;
+                    }
+                }
+
+                char localText[128];
+                snprintf(localText, sizeof(localText), "%s(%s)", wwName, plName);
+                
+                alertManager.addAlert(localText, 60000, false, latitude, longitude, disasterCat, pl, 0, isOutOfRegionPair);
+                
+                if (ww != 0) {
+                    if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
+                        qzssState = 2;
+                        qzssTimeout = millis() + 60000;
+                        strncpy(alertText, localText, sizeof(alertText) - 1);
+                        alertText[sizeof(alertText) - 1] = '\0';
+                        xSemaphoreGive(qzssMutex);
+                    }
+                    hasAlertAdded = true;
                 }
             }
-
-            snprintf(localText, sizeof(localText), "%s(%s)", wwName, plName);
-            code = pl;
+            if (hasAlertAdded) {
+                return;
+            }
             break;
         }
         case 11: { // 洪水
@@ -513,33 +541,69 @@ void QzssParser::decodeMT43(const uint8_t* l1s_msg) {
             break;
         }
         case 14: { // 海上
-            uint32_t dw = getUbxBits(l1s_msg, 54, 5); // Dw_1
-            uint32_t pl = getUbxBits(l1s_msg, 59, 14); // Pl_1
-            const char* dwName = getMarineWarningName(dw);
-            if (!dwName) dwName = "海上警報";
-            const char* plName = getMarineForecastName(pl);
-            if (!plName) plName = "海域";
+            bool hasAlertAdded = false;
+            // 仕様書に基づき、最大8個の警報ペア(Region 1〜8)をデコードする
+            for (int pairIdx = 0; pairIdx < 8; pairIdx++) {
+                // 仕様書 Table 4.1.2-51 に従い、Dw_1 はビット 53、Pl_1 はビット 58 から開始 (1ビットのズレを修正)
+                int dwOffset = 53 + pairIdx * 19;
+                int plOffset = 58 + pairIdx * 19;
+                
+                uint32_t dw = getUbxBits(l1s_msg, dwOffset, 5); // Dw_x
+                uint32_t pl = getUbxBits(l1s_msg, plOffset, 14); // Pl_x
+                
+                if (dw == 0 && pl == 0) {
+                    continue; // 未使用スロット
+                }
+                
+                const char* dwName = getMarineWarningName(dw);
+                char dwNameBuf[32];
+                if (dwName) {
+                    strncpy(dwNameBuf, dwName, sizeof(dwNameBuf) - 1);
+                    dwNameBuf[sizeof(dwNameBuf) - 1] = '\0';
+                } else {
+                    snprintf(dwNameBuf, sizeof(dwNameBuf), "海上警報(コード:%d)", dw);
+                }
 
-            if (settings.myRegionCode != 0 && myPrefName) {
-                if (!isPrefectureAffected(plName, myPrefName)) {
-                    isOutOfRegion = true;
+                const char* plName = getMarineForecastName(pl);
+                char plNameBuf[64];
+                if (plName) {
+                    strncpy(plNameBuf, plName, sizeof(plNameBuf) - 1);
+                    plNameBuf[sizeof(plNameBuf) - 1] = '\0';
+                } else {
+                    snprintf(plNameBuf, sizeof(plNameBuf), "海域(コード:%d)", pl);
+                }
+
+                bool isOutOfRegionPair = false;
+                if (settings.myRegionCode != 0 && myPrefName) {
+                    if (!isPrefectureAffected(plNameBuf, myPrefName)) {
+                        isOutOfRegionPair = true;
+                    }
+                }
+
+                char localText[128];
+                if (dw == 0) {
+                    snprintf(localText, sizeof(localText), "海上警報解除(%s等)", plNameBuf);
+                    alertManager.removeAlertsStartWith("海上");
+                } else {
+                    snprintf(localText, sizeof(localText), "%s(%s)", dwNameBuf, plNameBuf);
+                }
+
+                alertManager.addAlert(localText, 60000, false, latitude, longitude, disasterCat, pl, 0, isOutOfRegionPair);
+                
+                if (dw != 0) {
+                    if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
+                        qzssState = 2;
+                        qzssTimeout = millis() + 60000;
+                        strncpy(alertText, localText, sizeof(alertText) - 1);
+                        alertText[sizeof(alertText) - 1] = '\0';
+                        xSemaphoreGive(qzssMutex);
+                    }
+                    hasAlertAdded = true;
                 }
             }
-
-            if (dw == 0) {
-                if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
-                    snprintf(alertText, sizeof(alertText), "海上警報解除(%s等)", plName);
-                    xSemaphoreGive(qzssMutex);
-                }
-                alertManager.removeAlertsStartWith("海上");
-                char cancelText[128];
-                snprintf(cancelText, sizeof(cancelText), "海上警報解除(%s等)", plName);
-                alertManager.addAlert(cancelText, 60000, false, 0.0, 0.0, disasterCat, pl, 0, isOutOfRegion);
+            if (hasAlertAdded) {
                 return;
             }
-
-            snprintf(localText, sizeof(localText), "%s(%s)", dwName, plName);
-            code = pl;
             break;
         }
         default:
@@ -564,6 +628,11 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
     uint32_t provider = getUbxBits(l1s_msg, 35, 5); // プロバイダ(A3)
     uint32_t hazardCat = getUbxBits(l1s_msg, 40, 7); // 災害カテゴリ(A4)
     uint32_t guidance = getUbxBits(l1s_msg, 70, 10); // 避難勧告(A11)
+    uint32_t a12 = getUbxBits(l1s_msg, 80, 16); // 楕円中心緯度(A12)
+    uint32_t a13 = getUbxBits(l1s_msg, 96, 17); // 楕円中心経度(A13)
+    uint32_t a14 = getUbxBits(l1s_msg, 113, 5); // 長軸半径(A14)
+    uint32_t a15 = getUbxBits(l1s_msg, 118, 5); // 短軸半径(A15)
+    uint32_t a16 = getUbxBits(l1s_msg, 123, 6); // 方位角(A16)
 
     bool isOutOfRegion = false;
     if (country == 111) { // 日本国コード
@@ -571,7 +640,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             if (alertManager.hasRealAlert()) {
                 return;
             }
-            char localText[128] = "DCX 訓練/試験メッセージ";
+            char localText[256] = "DCX 訓練/試験メッセージ";
             if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
                 qzssState = 1;
                 qzssTimeout = millis() + 15000;
@@ -587,32 +656,29 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             const char* hazardName = getDcxHazardName(hazardCat);
             if (!hazardName) hazardName = "災害情報";
 
-            // 2. 避難ガイダンステキストの構築
-            char guidanceStr[64] = "指示なし";
-            if (guidance > 0) {
-                const char* directText = getDcxGuidanceTextName(guidance);
-                if (directText) {
-                    strncpy(guidanceStr, directText, sizeof(guidanceStr));
-                } else {
-                    // 合成ルール
-                    uint32_t basic = (guidance >> 8) & 0x03;
-                    uint32_t info = guidance & 0xFF;
-                    const char* basicStr = "";
-                    if (basic == 1) basicStr = "留まれ:";
-                    else if (basic == 2) basicStr = "向かえ:";
-                    else if (basic == 3) basicStr = "離れろ:";
-                    
-                    const char* infoStr = "";
-                    if (info == 1) infoStr = "頑丈な建物";
-                    else if (info == 2) infoStr = "3階以上";
-                    else if (info == 3) infoStr = "地下";
-                    else if (info == 4) infoStr = "山";
-                    else if (info == 5) infoStr = "水場";
-                    else if (info == 6) infoStr = "化学工場";
-                    else if (info == 7) infoStr = "崖";
-                    
-                    snprintf(guidanceStr, sizeof(guidanceStr), "%s%s", basicStr, infoStr);
-                }
+            // 2. 避難ガイダンステキストの構築 (QZSS_Tables.h の高精度定義を使用)
+            String guidanceText = getDcxGuidanceText(guidance);
+            char guidanceStr[128];
+            if (guidanceText.length() > 0) {
+                strncpy(guidanceStr, guidanceText.c_str(), sizeof(guidanceStr) - 1);
+                guidanceStr[sizeof(guidanceStr) - 1] = '\0';
+            } else {
+                strcpy(guidanceStr, "指示なし");
+            }
+
+            // 楕円パラメータの変換 (A12-A16 が 0 でない場合)
+            double latitude = 0.0;
+            double longitude = 0.0;
+            double ellipseMajor = 0.0;
+            double ellipseMinor = 0.0;
+            double ellipseAzimuth = 0.0;
+
+            if (a12 != 0 || a13 != 0 || a14 != 0) {
+                latitude = -90.0 + (180.0 / 65535.0) * a12;
+                longitude = -180.0 + (360.0 / 131071.0) * a13;
+                ellipseMajor = getDcxEllipseRadius(a14);
+                ellipseMinor = getDcxEllipseRadius(a15);
+                ellipseAzimuth = -90.0 + (180.0 / 64.0) * a16;
             }
 
             // 3. 対象地域の構築
@@ -691,7 +757,7 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
             }
 
             const char* typeStr = (provider == 2 || provider == 3) ? "Jアラート" : "Lアラート";
-            char localText[128];
+            char localText[256];
             snprintf(localText, sizeof(localText), "%s:%s(%s) %s", typeStr, hazardName, areaStr, guidanceStr);
             Serial.printf("\n[MT44] %s: %s, 対象:%s, 指示:%s\n", typeStr, hazardName, areaStr, guidanceStr);
             
@@ -702,9 +768,9 @@ void QzssParser::decodeMT44(const uint8_t* l1s_msg) {
                 alertText[sizeof(alertText) - 1] = '\0';
                 xSemaphoreGive(qzssMutex);
             }
-            alertManager.addAlert(localText, 60000, false, 0.0, 0.0, 44, hazardCat, prefMask, isOutOfRegion);
+            alertManager.addAlert(localText, 60000, false, latitude, longitude, 44, hazardCat, prefMask, isOutOfRegion, ellipseMajor, ellipseMinor, ellipseAzimuth);
         } else if (msgType == 3) {
-            char localText[128] = "Jアラート/Lアラート 警報解除";
+            char localText[256] = "Jアラート/Lアラート 警報解除";
             if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
                 qzssState = 1;
                 qzssTimeout = millis() + 60000;
