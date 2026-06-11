@@ -1381,7 +1381,12 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 svgGroup.innerHTML = '';
             }
 
-            if (!alerts || alerts.length === 0) return;
+            if (!alerts || alerts.length === 0) {
+                if (leafletLoaded && map) {
+                    map.setView([36.2048, 138.2529], 5);
+                }
+                return;
+            }
 
             alerts.forEach(alert => {
                 let lat = alert.lat || 0;
@@ -1463,30 +1468,54 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         const y = 46 - loc.lat;
                         
                         if (x >= 122 && x <= 147 && y >= 0 && y <= 22) {
-                            const pulseElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                            pulseElement.setAttribute('cx', x);
-                            pulseElement.setAttribute('cy', y);
-                            
-                            let rVal = 0.6;
+                            let pulseElement;
                             if (loc.isEllipse) {
-                                rVal = Math.min(Math.max(alert.elMajor / 111.0, 0.2), 3.0);
-                            } else if (loc.radius) {
-                                rVal = loc.radius / 111000.0;
-                            } else if (alert.cat === 5) {
-                                rVal = 0.4;
+                                pulseElement = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+                                pulseElement.setAttribute('cx', x);
+                                pulseElement.setAttribute('cy', y);
+                                const rx = alert.elMinor / (111.0 * Math.cos(loc.lat * Math.PI / 180));
+                                const ry = alert.elMajor / 111.0;
+                                pulseElement.setAttribute('rx', rx);
+                                pulseElement.setAttribute('ry', ry);
+                                pulseElement.setAttribute('transform', `rotate(${alert.elAzimuth}, ${x}, ${y})`);
+
+                                const animateRx = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+                                animateRx.setAttribute('attributeName', 'rx');
+                                animateRx.setAttribute('values', `${rx * 0.2};${rx * 1.3};${rx * 0.2}`);
+                                animateRx.setAttribute('dur', '2s');
+                                animateRx.setAttribute('repeatCount', 'indefinite');
+                                pulseElement.appendChild(animateRx);
+
+                                const animateRy = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+                                animateRy.setAttribute('attributeName', 'ry');
+                                animateRy.setAttribute('values', `${ry * 0.2};${ry * 1.3};${ry * 0.2}`);
+                                animateRy.setAttribute('dur', '2s');
+                                animateRy.setAttribute('repeatCount', 'indefinite');
+                                pulseElement.appendChild(animateRy);
+                            } else {
+                                pulseElement = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                                pulseElement.setAttribute('cx', x);
+                                pulseElement.setAttribute('cy', y);
+                                
+                                let rVal = 0.6;
+                                if (loc.radius) {
+                                    rVal = loc.radius / 111000.0;
+                                } else if (alert.cat === 5) {
+                                    rVal = 0.4;
+                                }
+                                pulseElement.setAttribute('r', rVal);
+
+                                const animateR = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+                                animateR.setAttribute('attributeName', 'r');
+                                animateR.setAttribute('values', `${rVal * 0.2};${rVal * 1.3};${rVal * 0.2}`);
+                                animateR.setAttribute('dur', '2s');
+                                animateR.setAttribute('repeatCount', 'indefinite');
+                                pulseElement.appendChild(animateR);
                             }
                             
-                            pulseElement.setAttribute('r', rVal);
                             pulseElement.setAttribute('fill', hexToRgba(loc.color, 0.4));
                             pulseElement.setAttribute('stroke', loc.color);
                             pulseElement.setAttribute('stroke-width', '0.08');
-                            
-                            const animateR = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
-                            animateR.setAttribute('attributeName', 'r');
-                            animateR.setAttribute('values', `${rVal * 0.2};${rVal * 1.3};${rVal * 0.2}`);
-                            animateR.setAttribute('dur', '2s');
-                            animateR.setAttribute('repeatCount', 'indefinite');
-                            pulseElement.appendChild(animateR);
                             
                             svgGroup.appendChild(pulseElement);
                             
@@ -1500,6 +1529,11 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     }
                 });
             });
+
+            if (leafletLoaded && map && mapMarkers.length > 0) {
+                const group = L.featureGroup(mapMarkers);
+                map.fitBounds(group.getBounds().pad(0.2));
+            }
         }
 
         function hexToRgba(hex, alpha) {
@@ -1792,7 +1826,14 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                         `;
                     }
                 }
-                updateMap(data.alerts || []);
+                
+                // 警報データのマップ用シグネチャを生成して、変更があった場合のみマップを更新する
+                const currentMapSignature = (data.alerts || []).map(a => `${a.text}|${a.lat}|${a.lon}|${a.elMajor}|${a.elMinor}|${a.elAzimuth}`).join("||");
+                const mapEl = document.getElementById('leaflet-map');
+                if (mapEl && mapEl.getAttribute('data-signature') !== currentMapSignature) {
+                    mapEl.setAttribute('data-signature', currentMapSignature);
+                    updateMap(data.alerts || []);
+                }
 
                 // 警報履歴の更新
                 const historyContainer = document.getElementById('history-container');
