@@ -171,7 +171,7 @@ void EwsDecoder::resetAlert() {
 void EwsDecoder::updateTimeouts(uint32_t now) {
     bool needReset = false;
     if (xSemaphoreTake(stateMutex, portMAX_DELAY) == pdTRUE) {
-        if (ewsAlertState > 0 && now > ewsAlertTimeout) {
+        if (ewsAlertState > 0 && (int32_t)(now - ewsAlertTimeout) > 0) {
             needReset = true;
         }
         xSemaphoreGive(stateMutex);

@@ -201,7 +201,7 @@ void taskCore0(void *pvParameters) {
         }
 
         // LED点滅の非同期処理
-        if (ledBlinkCount > 0 && now >= nextLedToggleTime) {
+        if (ledBlinkCount > 0 && (int32_t)(now - nextLedToggleTime) >= 0) {
             nextLedToggleTime = now + 250; // 250msおきに反転
             ledState = !ledState;
             digitalWrite(ALERT_LED, ledState ? HIGH : LOW);
@@ -233,7 +233,8 @@ void taskCore0(void *pvParameters) {
             if (nmeaIndex < 88) nmeaBuffer[nmeaIndex++] = c;
             if (c == '\n' && nmeaIndex > 6) {
                 nmeaBuffer[nmeaIndex] = '\0';
-                if (nmeaBuffer[0] == '$' && nmeaBuffer[3] == 'G' && nmeaBuffer[4] == 'G' && nmeaBuffer[5] == 'A') {
+                char* ggaPos = strstr(nmeaBuffer, "GGA");
+                if (nmeaBuffer[0] == '$' && ggaPos != nullptr && (ggaPos - nmeaBuffer) < 6) {
                     lastGgaTime = millis();
                     // Copy raw NMEA sentence, strip trailing newlines
                     strncpy(lastGga, nmeaBuffer, sizeof(lastGga) - 1);
@@ -287,7 +288,7 @@ void taskCore0(void *pvParameters) {
                 if (status == WL_CONNECTION_LOST || status == WL_DISCONNECTED) {
                     Serial.println("[WiFi] 接続が完全に切断されています。再接続を試みます...");
                     WiFi.disconnect();
-                    delay(100);
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
                     WiFi.begin(settings.wifiSSID.c_str(), settings.wifiPassword.c_str());
                 }
             }

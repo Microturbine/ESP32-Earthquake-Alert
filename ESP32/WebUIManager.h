@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <WebServer.h>
+#include "AlertManager.h"
 
 class WebUIManager {
 public:
@@ -18,6 +19,11 @@ private:
     bool apMode;
     String localIP;
     String activeSSID;
+
+    // Polling buffers to prevent heap fragmentation
+    Alert statusAlerts[AlertManager::MAX_ALERTS];
+    HistoryAlert statusHistAlerts[AlertManager::MAX_HISTORY];
+    String jsonResponseBuf;
 
     void setupRoutes();
     void handleRoot();

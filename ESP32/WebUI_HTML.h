@@ -1163,6 +1163,16 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
     </div>
 
     <script>
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         function getEllipsePolygon(lat, lon, semiMajorKm, semiMinorKm, azimuthDeg, numPoints = 64) {
             const coords = [];
             const R = 6378.137; // 地球の半径 (km)
@@ -1185,6 +1195,8 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         let lastIp = "";
         let currentMute = false;
         let currentScreenOff = false;
+        let currentPollInterval = 5000;
+        let pollTimeoutId = null;
 
         let map = null;
         let leafletLoaded = false;
@@ -1448,7 +1460,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                 fillOpacity: 0.2,
                                 weight: 2
                             }).addTo(map);
-                            markerPolygon.bindPopup(`<b>${alert.text}</b>`);
+                            markerPolygon.bindPopup(`<b>${escapeHtml(alert.text)}</b>`);
                             mapMarkers.push(markerPolygon);
                         } else {
                             const radius = loc.radius || (alert.cat === 44 ? 30000 : 50000);
@@ -1458,7 +1470,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                 fillOpacity: 0.35,
                                 radius: radius
                             }).addTo(map);
-                            markerCircle.bindPopup(`<b>${alert.text}</b>`);
+                            markerCircle.bindPopup(`<b>${escapeHtml(alert.text)}</b>`);
                             mapMarkers.push(markerCircle);
                         }
                     }
@@ -1594,6 +1606,13 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 if (!response.ok) throw new Error('API Response Error');
                 const data = await response.json();
                 
+                // アラートの有無に応じてポーリング間隔を動的に変更
+                if (data.alerts && data.alerts.length > 0) {
+                    currentPollInterval = 1500;
+                } else {
+                    currentPollInterval = 5000;
+                }
+                
                 // コネクション表示
                 const dot = document.getElementById('connection-dot');
                 const text = document.getElementById('connection-text');
@@ -1719,7 +1738,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                                 <span class="alert-type-badge">${badgeText}</span>
                                                 <span class="alert-expiry" id="alert-expiry-${idx}"></span>
                                             </div>
-                                            <div class="alert-body">${alert.text}</div>
+                                            <div class="alert-body">${escapeHtml(alert.text)}</div>
                                         </div>
                                     `;
                                 } else {
@@ -1738,7 +1757,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                                         const origIdx = data.alerts.findIndex(a => a.text === ma.text && a.cat === ma.cat);
                                                         return `
                                                             <div class="marine-sub-item" style="padding: 6px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); display: flex; justify-content: space-between; font-size: 0.9em; align-items: center; transition: background 0.2s;" onmouseover="this.style.background='rgba(59,130,246,0.1)'" onmouseout="this.style.background='transparent'">
-                                                                <span class="marine-sub-text" style="color: var(--text-primary); text-shadow: 0 0 10px rgba(255,255,255,0.1);">${ma.text}</span>
+                                                                <span class="marine-sub-text" style="color: var(--text-primary); text-shadow: 0 0 10px rgba(255,255,255,0.1);">${escapeHtml(ma.text)}</span>
                                                                 <span class="marine-sub-expiry alert-expiry" style="opacity: 0.85; font-size: 0.85em; white-space: nowrap; color: var(--marine);" id="alert-expiry-${origIdx}"></span>
                                                             </div>
                                                         `;
@@ -1772,7 +1791,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                             <span class="alert-type-badge">${badgeText}</span>
                                             <span class="alert-expiry" id="alert-expiry-${idx}"></span>
                                         </div>
-                                        <div class="alert-body">${alert.text}</div>
+                                        <div class="alert-body">${escapeHtml(alert.text)}</div>
                                     </div>
                                 `;
                             }
@@ -1867,7 +1886,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                                             <span class="${badgeClass}">${badgeText}</span>
                                             <span class="history-time">${hist.time}</span>
                                         </div>
-                                        <div class="history-body">${hist.text}</div>
+                                        <div class="history-body">${escapeHtml(hist.text)}</div>
                                     </div>
                                 `;
                             });
@@ -1884,6 +1903,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                 console.error(err);
                 document.getElementById('connection-dot').classList.remove('online');
                 document.getElementById('connection-text').innerText = "切断中 (再接続試行...)";
+                currentPollInterval = 5000;
             }
         }
 
@@ -1935,7 +1955,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     body: formData
                 });
                 if (response.ok) {
-                    fetchStatus();
+                    startPollLoop();
                 } else {
                     alert('設定の保存に失敗しました');
                 }
@@ -1977,7 +1997,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: formData
                 });
-                fetchStatus();
+                startPollLoop();
             } catch (err) {
                 console.error(err);
             }
@@ -1999,7 +2019,7 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: formData
                 });
-                fetchStatus();
+                startPollLoop();
             } catch (err) {
                 console.error(err);
             }
@@ -2009,16 +2029,21 @@ const char WEBUI_HTML[] PROGMEM = R"rawhtml(
         async function clearAlerts() {
             try {
                 await fetch('/api/clear', { method: 'POST' });
-                fetchStatus();
+                startPollLoop();
             } catch (err) {
                 console.error(err);
             }
         }
 
+        async function startPollLoop() {
+            if (pollTimeoutId) clearTimeout(pollTimeoutId);
+            await fetchStatus();
+            pollTimeoutId = setTimeout(startPollLoop, currentPollInterval);
+        }
+
         // 起動時および定期更新の開始
         loadMapAssets();
-        fetchStatus();
-        setInterval(fetchStatus, 1500);
+        startPollLoop();
     </script>
 </body>
 </html>

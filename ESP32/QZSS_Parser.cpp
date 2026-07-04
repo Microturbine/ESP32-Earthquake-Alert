@@ -65,7 +65,7 @@ String QzssParser::getLastL1sHex() {
 
 void QzssParser::updateTimeouts(uint32_t now) {
     if (xSemaphoreTake(qzssMutex, portMAX_DELAY) == pdTRUE) {
-        if (qzssState > 0 && qzssTimeout > 0 && now > qzssTimeout) {
+        if (qzssState > 0 && qzssTimeout > 0 && (int32_t)(now - qzssTimeout) > 0) {
             qzssState = 0;
             alertText[0] = '\0';
         }

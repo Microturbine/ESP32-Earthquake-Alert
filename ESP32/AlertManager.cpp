@@ -43,7 +43,7 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
         bool found = false;
         for (int i = 0; i < alertCount; i++) {
             if (strcmp(alerts[i].text, text) == 0) {
-                if (expiry > alerts[i].expiry) {
+                if ((int32_t)(expiry - alerts[i].expiry) > 0) {
                     alerts[i].expiry = expiry;
                     changedFlag = true;
                 }
@@ -68,7 +68,7 @@ bool AlertManager::addAlert(const char* text, uint32_t timeoutMs, bool isTest,
                 int earliestIdx = 0;
                 uint32_t earliestExpiry = alerts[0].expiry;
                 for (int i = 1; i < alertCount; i++) {
-                    if (alerts[i].expiry < earliestExpiry) {
+                    if ((int32_t)(alerts[i].expiry - earliestExpiry) < 0) {
                         earliestExpiry = alerts[i].expiry;
                         earliestIdx = i;
                     }
@@ -141,7 +141,7 @@ void AlertManager::update(uint32_t now) {
     if (xSemaphoreTake(mutex, portMAX_DELAY)) {
         int writeIdx = 0;
         for (int i = 0; i < alertCount; i++) {
-            if (alerts[i].expiry == 0 || now < alerts[i].expiry) {
+            if (alerts[i].expiry == 0 || (int32_t)(alerts[i].expiry - now) > 0) {
                 alerts[writeIdx++] = alerts[i];
             } else {
                 changedFlag = true;

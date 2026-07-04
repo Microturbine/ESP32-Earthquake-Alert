@@ -21,6 +21,7 @@ extern char lastGga[];
 WebUIManager::WebUIManager() : server(80), apMode(false), localIP("0.0.0.0"), activeSSID("") {}
 
 void WebUIManager::init() {
+    jsonResponseBuf.reserve(4096);
     Serial.println("\n--- WiFi初期化 ---");
     
     // 自動保存を無効化し、以前の接続状態を完全にクリーンアップしてハードウェアをリセット
@@ -133,50 +134,39 @@ void WebUIManager::handleRoot() {
     server.send_P(200, "text/html", WEBUI_HTML);
 }
 
-// JSON特殊文字エスケープ用のヘルパー関数
 static String escapeJsonString(const String& input) {
-    String output = "";
-    output.reserve(input.length() + 8); // 少し余裕を持たせて確保
-    for (size_t i = 0; i < input.length(); i++) {
+    int len = input.length();
+    char buf[512];
+    int j = 0;
+    for (int i = 0; i < len && j < 510; i++) {
         char c = input[i];
-        if (c == '"') {
-            output += "\\\"";
-        } else if (c == '\\') {
-            output += "\\\\";
-        } else if (c == '/') {
-            output += "\\/";
-        } else if (c == '\b') {
-            output += "\\b";
-        } else if (c == '\f') {
-            output += "\\f";
-        } else if (c == '\n') {
-            output += "\\n";
-        } else if (c == '\r') {
-            output += "\\r";
-        } else if (c == '\t') {
-            output += "\\t";
-        } else if (c >= 0 && c < 32) {
-            char hex[8];
-            snprintf(hex, sizeof(hex), "\\u%04x", c);
-            output += hex;
+        if (c == '"')       { buf[j++] = '\\'; buf[j++] = '"'; }
+        else if (c == '\\') { buf[j++] = '\\'; buf[j++] = '\\'; }
+        else if (c == '/')  { buf[j++] = '\\'; buf[j++] = '/'; }
+        else if (c == '\b') { buf[j++] = '\\'; buf[j++] = 'b'; }
+        else if (c == '\f') { buf[j++] = '\\'; buf[j++] = 'f'; }
+        else if (c == '\n') { buf[j++] = '\\'; buf[j++] = 'n'; }
+        else if (c == '\r') { buf[j++] = '\\'; buf[j++] = 'r'; }
+        else if (c == '\t') { buf[j++] = '\\'; buf[j++] = 't'; }
+        else if (c >= 0 && c < 32) {
+            if (j + 6 < 512) {
+                j += snprintf(&buf[j], 7, "\\u%04x", c);
+            }
         } else {
-            output += c;
+            buf[j++] = c;
         }
     }
-    return output;
+    buf[j] = '\0';
+    return String(buf);
 }
 
 void WebUIManager::handleGetStatus() {
-    // 警報リストのコピー (ヒープ上に動的確保してスタックオーバーフローを防止)
-    Alert* activeAlerts = new Alert[AlertManager::MAX_ALERTS];
-    int count = alertManager.copyAlerts(activeAlerts, AlertManager::MAX_ALERTS);
+    // 静的バッファにスレッドセーフにコピーして動的ヒープ確保を排除
+    int count = alertManager.copyAlerts(statusAlerts, AlertManager::MAX_ALERTS);
+    int histCount = alertManager.copyHistory(statusHistAlerts, AlertManager::MAX_HISTORY);
     
-    // 警報履歴のコピー (ヒープ上に動的確保してスタックオーバーフローを防止)
-    HistoryAlert* histAlerts = new HistoryAlert[AlertManager::MAX_HISTORY];
-    int histCount = alertManager.copyHistory(histAlerts, AlertManager::MAX_HISTORY);
-    
-    String json;
-    json.reserve(4096); // Pre-allocate to prevent heap fragmentation
+    // バッファ容量を維持したままクリアし再利用
+    jsonResponseBuf = "";
     
     char headerBuf[512];
     snprintf(headerBuf, sizeof(headerBuf),
@@ -192,20 +182,20 @@ void WebUIManager::handleGetStatus() {
              localIP.c_str(),
              ewsDecoder.getMute() ? "true" : "false",
              displayManager.getScreenOff() ? "true" : "false");
-    json += headerBuf;
+    jsonResponseBuf += headerBuf;
     
     uint32_t now = millis();
     for (int i = 0; i < count; i++) {
         uint32_t remainingSec = 0;
-        if (activeAlerts[i].expiry > now) {
-            remainingSec = (activeAlerts[i].expiry - now) / 1000;
+        if (statusAlerts[i].expiry > now) {
+            remainingSec = (statusAlerts[i].expiry - now) / 1000;
         }
         
-        String escapedText = escapeJsonString(activeAlerts[i].text);
+        String escapedText = escapeJsonString(statusAlerts[i].text);
         
         char maskStr[32];
-        uint32_t prefMaskHigh = (uint32_t)(activeAlerts[i].prefMask >> 32);
-        uint32_t prefMaskLow = (uint32_t)(activeAlerts[i].prefMask & 0xFFFFFFFFULL);
+        uint32_t prefMaskHigh = (uint32_t)(statusAlerts[i].prefMask >> 32);
+        uint32_t prefMaskLow = (uint32_t)(statusAlerts[i].prefMask & 0xFFFFFFFFULL);
         snprintf(maskStr, sizeof(maskStr), "\"%08x%08x\"", prefMaskHigh, prefMaskLow);
         
         char alertBuf[600];
@@ -213,41 +203,41 @@ void WebUIManager::handleGetStatus() {
                  "{\"text\":\"%s\",\"remaining\":%u,\"isTest\":%s,\"lat\":%.4f,\"lon\":%.4f,\"cat\":%d,\"code\":%d,\"prefMask\":%s,\"outOfRegion\":%s,\"elMajor\":%.3f,\"elMinor\":%.3f,\"elAzimuth\":%.2f}",
                  escapedText.c_str(),
                  remainingSec,
-                 activeAlerts[i].isTest ? "true" : "false",
-                 activeAlerts[i].latitude,
-                 activeAlerts[i].longitude,
-                 activeAlerts[i].disasterCat,
-                 activeAlerts[i].code,
+                 statusAlerts[i].isTest ? "true" : "false",
+                 statusAlerts[i].latitude,
+                 statusAlerts[i].longitude,
+                 statusAlerts[i].disasterCat,
+                 statusAlerts[i].code,
                  maskStr,
-                 activeAlerts[i].isOutOfRegion ? "true" : "false",
-                 activeAlerts[i].ellipseMajor,
-                 activeAlerts[i].ellipseMinor,
-                 activeAlerts[i].ellipseAzimuth);
+                 statusAlerts[i].isOutOfRegion ? "true" : "false",
+                 statusAlerts[i].ellipseMajor,
+                 statusAlerts[i].ellipseMinor,
+                 statusAlerts[i].ellipseAzimuth);
                  
-        json += alertBuf;
+        jsonResponseBuf += alertBuf;
         if (i < count - 1) {
-            json += ",";
+            jsonResponseBuf += ",";
         }
     }
-    json += "],";
+    jsonResponseBuf += "],";
     
     // 警報履歴のシリアライズ
-    json += "\"history\":[";
+    jsonResponseBuf += "\"history\":[";
     for (int i = 0; i < histCount; i++) {
-        String escapedText = escapeJsonString(histAlerts[i].text);
+        String escapedText = escapeJsonString(statusHistAlerts[i].text);
         char histBuf[256];
         snprintf(histBuf, sizeof(histBuf),
                  "{\"text\":\"%s\",\"isTest\":%s,\"outOfRegion\":%s,\"time\":\"%s\"}",
                  escapedText.c_str(),
-                 histAlerts[i].isTest ? "true" : "false",
-                 histAlerts[i].isOutOfRegion ? "true" : "false",
-                 histAlerts[i].receivedTimeStr);
-        json += histBuf;
+                 statusHistAlerts[i].isTest ? "true" : "false",
+                 statusHistAlerts[i].isOutOfRegion ? "true" : "false",
+                 statusHistAlerts[i].receivedTimeStr);
+        jsonResponseBuf += histBuf;
         if (i < histCount - 1) {
-            json += ",";
+            jsonResponseBuf += ",";
         }
     }
-    json += "],";
+    jsonResponseBuf += "],";
     
     // GPS & みちびき デバッグ情報
     String escapedGga = escapeJsonString(lastGga);
@@ -264,19 +254,10 @@ void WebUIManager::handleGetStatus() {
              lastL1sHexStr.c_str(),
              (unsigned int)sinceLastL1s);
              
-    json += tailBuf;
-    json += "}";
+    jsonResponseBuf += tailBuf;
+    jsonResponseBuf += "}";
     
-    // シリアルモニタへのデバッグ出力（JSON内容確認用）
-    // Serial.println("\n--- [WebUI Status JSON Send] ---");
-    // Serial.println(json);
-    // Serial.println("--------------------------------\n");
-    
-    // 動的メモリの解放
-    delete[] activeAlerts;
-    delete[] histAlerts;
-    
-    server.send(200, "application/json", json);
+    server.send(200, "application/json", jsonResponseBuf);
 }
 
 void WebUIManager::handlePostSettings() {

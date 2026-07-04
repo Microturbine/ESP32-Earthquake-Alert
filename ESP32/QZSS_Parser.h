@@ -2,6 +2,7 @@
 #define QZSS_PARSER_H
 
 #include <Arduino.h>
+#include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -20,10 +21,10 @@ public:
     void resetAlert();
     
     // GPS & みちびき デバッグ用統計情報
-    volatile uint32_t sfrbxCount;
-    volatile uint32_t mt43Count;
-    volatile uint32_t mt44Count;
-    volatile uint32_t lastL1sTime;
+    std::atomic<uint32_t> sfrbxCount;
+    std::atomic<uint32_t> mt43Count;
+    std::atomic<uint32_t> mt44Count;
+    std::atomic<uint32_t> lastL1sTime;
 
 private:
     enum UBXState { SYNC1, SYNC2, CLASS, ID, LEN1, LEN2, PAYLOAD, CK_A, CK_B };
